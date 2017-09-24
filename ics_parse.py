@@ -13,6 +13,35 @@ import json
 
 
 def format_data(calendar, planning_parser):
+    """
+    Parse every event in the calendar string given in parameter with the parser
+    also given in parameter and return a list with the events as formatted
+    data.
+
+    The calendar string must respect the iCalendar format in the first place.
+
+    The data returned correspond to this example :
+        [
+            {
+                "title": "Any title",
+                "start_date": datetime.datetime(2017, 25, 09, 8, 15, 0, 0),
+                "end_date": datetime.datetime(2017, 25, 09, 10, 15, 0, 0),
+                "classrooms": ["Room 1", "Room b"],
+                "groups": ["TD1", "TD2"],
+                "teachers": ["Mr Smith"],
+                "undetermined_description_items": ["Ms WÎεrd ϵncöding", "garbage"],
+                "event_id": "ADE4567890123456d89012d456789012d456d89"
+            },
+            {
+                ...
+            },
+            ...
+        ]
+
+    :param calendar: the iCalendar string to parse
+    :param planning_parser: the parser to use (an instance of EventParser)
+    :return: a list of events
+    """
     ret = []
     vevents = calendar.walk("VEVENT")
     for vevent in vevents:
@@ -31,13 +60,32 @@ def format_data(calendar, planning_parser):
     return ret
 
 
-def parse_and_insert_database(data, db):
-    pass
-
-
-class CalendarParser:
+def update_database(event_list, collection):
     """
-    A parser with a main method parse() used to get the attributes from an event in the Calendar.
+    Compare the list of events given in parameter (formatted like the
+    format_data function) and the data in the database for every events.
+
+    If the event found in the new calendar is different from the event in the
+    database, then the latter is modified with the new data.
+
+    :param event_list: the list of events to insert in the database
+    :param collection: the collection (in the mongo database) to insert data
+    :return: None
+    """
+    for event in event_list:
+        collection.update_one(
+            {"event_id": event["event_id"]},
+            {
+                "$set": event
+            },
+            upsert=True
+        )
+
+
+class EventParser:
+    """
+    A parser with a main method parse() used to get the attributes from an
+    event in the Calendar.
 
     The get methods must be used after parsing.
     """
@@ -160,7 +208,7 @@ if __name__ == '__main__':
         collec_name = db_name + "_" + branch["name"]
         print("Collection " + collec_name)
         data_list = []
-        parser = CalendarParser(branch["teachers_patterns"], branch["groups_patterns"],
+        parser = EventParser(branch["teachers_patterns"], branch["groups_patterns"],
                                 branch["delimiter"])
         for group in branch["groups"]:
             i = 1
@@ -173,15 +221,14 @@ if __name__ == '__main__':
                     found = False
                     for data in data_list:
                         if item["event_id"] == data["event_id"]:
+                            # adds the current group to the affiliations
+                            data["affiliation"].append(group["name"])
                             found = True
                             break
                     if found is False:
+                        item["affiliation"] = [group["name"]]
                         data_list.append(item)
                 i += 1
 
-        # parse_and_insert_database(data, db)
-
-        print("Removing data list from collection " + collec_name)
-        db[collec_name].delete_many({})
-        print("Adding data to collection " + collec_name)
-        db[collec_name].insert_many(data_list)
+        print("Updating data in collection " + collec_name)
+        update_database(data_list, db[collec_name])
