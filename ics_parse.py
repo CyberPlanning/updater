@@ -9,12 +9,7 @@ import urllib.request
 import re
 from icalendar import Calendar
 from pymongo import MongoClient
-from datetime import timezone
 import json
-
-
-def utc_to_local(utc_dt):
-    return utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
 
 def format_data(calendar, planning_parser):
@@ -135,8 +130,8 @@ class EventParser:
         """
 
         self._title = str(vevent["SUMMARY"])
-        self._start_date = utc_to_local(vevent["DTSTART"].dt)
-        self._end_date = utc_to_local(vevent["DTEND"].dt)
+        self._start_date = vevent["DTSTART"].dt
+        self._end_date = vevent["DTEND"].dt
         self._classrooms = []
         for elem in vevent["LOCATION"].split(self._delimiter):
             if len(elem) != 0:
