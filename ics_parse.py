@@ -197,10 +197,17 @@ class EventParser:
 if __name__ == '__main__':
     PARAMS_FILENAME = "params.json"
 
-    params_file = open(PARAMS_FILENAME, 'r')
-    params = json.load(params_file)
+    with open(PARAMS_FILENAME, 'r') as params_file:
+        params = json.load(params_file)
 
-    client = MongoClient()
+    host = 'localhost'
+    if 'host' in params:
+        host = params['host']
+    port = 27017
+    if 'port' in params:
+        port = params['port']
+
+    client = MongoClient(host, port)
     db_name = params["database"]["name"]
     db = client[db_name]
 
