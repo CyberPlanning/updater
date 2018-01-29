@@ -23,6 +23,11 @@ LOG_INFO = 0
 LOG_WARNING = 1
 LOG_ERROR = 2
 
+DEFAULT_FREQUENCY = None
+DEFAULT_HOST = "localhost"
+DEFAULT_PORT = 27017
+DEFAULT_DELIMITER = "\n"
+
 
 def log(msg, lvl=LOG_INFO):
     """
@@ -48,6 +53,291 @@ def log(msg, lvl=LOG_INFO):
         alert,
         msg
     ))
+
+
+def get_params(filename):
+    """
+    Create the object of the parameters used for the updater, in the file which
+    path is given by filename.
+    Also, the method checks if everything is in order.
+
+    If an optional (facultatif) parameter isn't in the file, its default value
+    is set. It's still advised to choose a value even if its the default.
+    If a non-optional parameter isn't in the file, an error is raised.
+    To make things clear : a node is always necessary in the file, even if it's
+    only composed of optional elements.
+
+    The JSON file is described in French below.
+
+    {
+        "updater": les paramètres généraux de l'updater
+        {
+            "frequency": int (facultatif), la fréquence en secondes de lancement du script. Pas de récurrence du script si absent.
+        }
+        "database": les paramètres généraux de la base de données mongo
+        {
+            "name": string, le nom de la db du planning dans mongo.
+            "host": string (facultatif), le nom de l'hôte pour la base de données mongo. Par défaut "localhost".
+            "port": int (facultatif), le port de la base de données sur l'hôte mongo. Par défaut 27017.
+        }
+        "branches": les filières à suivre/mettre à jour, chacune ayant une collection dans la base de données du planning, donc les noms doivent être différents
+        [
+            {
+                "name": string, le nom de la collection de la filière dans la base de données
+                "teachers_patterns": les expressions régulières permettant de détecter le nom d'un professeur dans la description complète du cours
+                [
+                    string
+                ]
+                "groups_patterns": les expressions régulières permettant de détecter le nom d'un groupe dans la description complète du cours
+                [
+                    string
+                ]
+                "delimiter": string (facultatif), le délimiteur de chaque champ dans le fichier iCalendar. Par défaut "\n".
+                "groups": les groupes/classes de la filière, réparties par nom (dit affiliation)
+                [
+                    {
+                        "name": string, le nom du groupe auquel chaque cours sera rattaché dans la base de données (affiliation), unique pour un groupe
+                        "adresses": les URIs de téléchargement des fichiers iCalendar relatifs au cours
+                        [
+                            string
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+    :param filename: the path of the JSON file containing the parameters
+    :return: an object similar to the JSON pattern
+    """
+
+    # get the file JSON structure
+    p = None
+    try:
+        with open(filename, 'r') as p_file:
+            p = json.load(p_file)
+    except SyntaxError as e:
+        m = "The path of the params file {} might not be valid.".format(filename)
+        log(m, LOG_ERROR)
+        raise e
+    except FileNotFoundError as e:
+        m = "The JSON params file {} was not found.".format(filename)
+        log(m, LOG_ERROR)
+        raise e
+    except json.decoder.JSONDecodeError as e:
+        m = "The JSON params file {} couldn't be decoded.".format(filename)
+        log(m, LOG_ERROR)
+        raise e
+    except OSError as e:
+        m = "Unknown error while using the JSON params file {}.".format(filename)
+        log(m, LOG_ERROR)
+        raise e
+
+    # UPDATER
+    try:
+        if type(p["updater"]) is not dict:
+            m = "The \"updater\" node is not a dictionary in the JSON params file."
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+    except KeyError as e:
+        m = "The \"updater\" node not found in the JSON params file."
+        log(m, LOG_ERROR)
+        raise e
+
+    # UPDATER FREQUENCY
+    try:
+        if type(p["updater"]["frequency"]) is not int and p["updater"]["frequency"] is not None:
+            m = "The \"frequency\" in the \"updater\" node is not an int or None."
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+        else:
+            m = "The \"frequency\" is set to {} seconds.".format(p["updater"]["frequency"])
+            log(m, LOG_INFO)
+    except KeyError:
+        m = "The \"frequency\" in the \"updater\" node was not found. Setting the default value {}.".format(DEFAULT_FREQUENCY)
+        log(m, LOG_WARNING)
+        p["updater"]["frequency"] = DEFAULT_FREQUENCY
+
+    # DATABASE
+    try:
+        if type(p["database"]) is not dict:
+            m = "The \"database\" node is not a dictionary in the JSON params file."
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+    except KeyError as e:
+        m = "The \"database\" node not found in the JSON params file."
+        log(m, LOG_ERROR)
+        raise e
+
+    # DATABASE NAME
+    try:
+        if type(p["database"]["name"]) is not str:
+            m = "The \"name\" in the \"database\" node is not a str."
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+    except KeyError as e:
+        m = "The \"name\" in the \"database\" node was not found."
+        log(m, LOG_ERROR)
+        raise e
+
+    # DATABASE HOST
+    try:
+        if type(p["database"]["host"]) is not str:
+            m = "The \"host\" in the \"database\" node is not a str."
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+        else:
+            m = "The \"host\" is set to {}.".format(p["database"]["host"])
+            log(m, LOG_INFO)
+    except KeyError:
+        m = "The \"host\" in the \"database\" node was not found. Setting the default value {}.".format(DEFAULT_HOST)
+        log(m, LOG_WARNING)
+        p["database"]["host"] = DEFAULT_HOST
+
+    # DATABASE PORT
+    try:
+        if type(p["database"]["port"]) is not int:
+            m = "The \"port\" in the \"database\" node is not an int."
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+        else:
+            m = "The \"port\" is set to {}.".format(p["database"]["port"])
+            log(m, LOG_INFO)
+    except KeyError:
+        m = "The \"port\" in the \"database\" node was not found. Setting the default value {}.".format(
+            DEFAULT_HOST)
+        log(m, LOG_WARNING)
+        p["database"]["port"] = DEFAULT_HOST
+
+    # BRANCHES
+    try:
+        if type(p["branches"]) is not list:
+            m = "The \"branches\" node is not a dictionary in the JSON params file."
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+    except KeyError as e:
+        m = "The \"branches\" node not found in the JSON params file."
+        log(m, LOG_ERROR)
+        raise e
+
+    # BRANCHES NODES
+    b_i = 0
+    branch_names = []
+    for b in p["branches"]:
+        if type(b) is not dict:
+            m = "The node at position {} in \"branches\" is not a dict.".format(b_i)
+            log(m, LOG_ERROR)
+            raise TypeError(m)
+
+        # BRANCHES NODE NAME
+        try:
+            if type(b["name"]) is not str:
+                m = "The \"name\" in the node at position {} in \"branches\" is not a str.".format(b_i)
+                log(m, LOG_ERROR)
+                raise TypeError(m)
+            elif b["name"] in branch_names:
+                m = "The \"name\" in the node at position {} in \"branches\" already exists !".format(b_i)
+                log(m, LOG_ERROR)
+                raise TypeError(m)
+            branch_names.append(b["name"])
+        except KeyError as e:
+            m = "The \"name\" in the node at position {} in \"branches\" was not found.".format(b_i)
+            log(m, LOG_ERROR)
+            raise e
+
+        # BRANCHES NODE TEACHERS_PATTERNS
+        try:
+            p_i = 0
+            for pattern in b["teachers_patterns"]:
+                if type(pattern) is not str:
+                    m = "The element at position {} in \"teachers_patterns\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
+                    log(m, LOG_ERROR)
+                    raise TypeError(m)
+                p_i += 1
+        except KeyError as e:
+            m = "The \"teachers_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
+            log(m, LOG_ERROR)
+            raise e
+
+        # BRANCHES NODE GROUPS_PATTERNS
+        try:
+            p_i = 0
+            for pattern in b["groups_patterns"]:
+                if type(pattern) is not str:
+                    m = "The element at position {} in \"groups_patterns\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
+                    log(m, LOG_ERROR)
+                    raise TypeError(m)
+        except KeyError as e:
+            m = "The \"groups_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
+            log(m, LOG_ERROR)
+            raise e
+
+        # BRANCHES NODE DELIMITER
+        try:
+            if type(b["delimiter"]) is not str:
+                m = "The \"delimiter\" in the node at position {} in \"branches\" is not str.".format(b_i)
+                log(m, LOG_ERROR)
+                raise TypeError(m)
+        except KeyError as e:
+            m = "The \"delimiter\" in the node at position {} in \"branches\" was not found. Setting the default value {}.".format(b_i, DEFAULT_DELIMITER)
+            log(m, LOG_WARNING)
+            b["delimiter"] = DEFAULT_DELIMITER
+
+        # BRANCHES NODE GROUPS
+        try:
+            g_i = 0
+            g_names = []
+            for g in b["groups"]:
+                if type(g) is not dict:
+                    m = "The node at position {} in \"groups\" in the node at position {} in \"branches\" is not a dict.".format(g_i, b_i)
+                    log(m, LOG_ERROR)
+                    raise TypeError(m)
+
+                # BRANCHES NODE GROUP NAME
+                try:
+                    if type(g["name"]) is not str:
+                        m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a str".format(g_i, b_i)
+                        log(m, LOG_ERROR)
+                        raise TypeError(m)
+                    if g["name"] in g_names:
+                        m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" already exists !".format(g_i, b_i)
+                        log(m, LOG_ERROR)
+                        raise TypeError(m)
+                    g_names.append(g["name"])
+                except KeyError as e:
+                    m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
+                    log(m, LOG_ERROR)
+                    raise e
+
+                # BRANCHES NODE GROUP ADDRESSES
+                try:
+                    if type(g["addresses"]) is not list:
+                        m = "The \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a list.".format(g_i, b_i)
+                        log(m, LOG_ERROR)
+                        raise TypeError(m)
+                    for a in g["addresses"]:
+                        if type(a) is not str:
+                            m = "An element in \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a str.".format(g_i, b_i)
+                            log(m, LOG_ERROR)
+                            raise TypeError(m)
+                        if not re.match("http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+", a):
+                            m = "An element in \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" does not match the URI regex.".format(g_i, b_i)
+                            log(m, LOG_ERROR)
+                            raise ValueError(m)
+                except KeyError as e:
+                    m = "The \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
+                    log(m, LOG_ERROR)
+                    raise e
+
+                g_i += 1
+        except KeyError as e:
+            m = "The \"groups\" list in the node at position {} in \"branches\" was not found.".format(b_i)
+            log(m, LOG_ERROR)
+            raise e
+
+        b_i += 1
+
+    return p
 
 
 def format_data(calendar, planning_parser):
@@ -233,78 +523,29 @@ class EventParser:
 
 
 if __name__ == '__main__':
-    """
-    Description des paramètres récupérés dans le fichier de paramètres JSON.
-
-    {
-        "updater": les paramètres généraux de l'updater
-        {
-            "frequency": int (facultatif), la fréquence en secondes de lancement du script. Pas de récurrence du script si absent.
-        }
-        "database": les paramètres généraux de la base de données mongo
-        {
-            "name": string, le nom de la db du planning dans mongo.
-            "host": string (facultatif), le nom de l'hôte pour la base de données mongo. Par défaut "localhost".
-            "port": int (facultatif), le port de la base de données sur l'hôte mongo. Par défaut 27017.
-        }
-        "branches": les filières à suivre/mettre à jour, chacune ayant une collection dans la base de données du planning
-        [
-            {
-                "name": string, le nom de la collection de la filière dans la base de données
-                "teachers_patterns": les expressions régulières permettant de détecter le nom d'un professeur dans la description complète du cours
-                [
-                    string
-                ]
-                "groups_patterns": les expressions régulières permettant de détecter le nom d'un groupe dans la description complète du cours
-                [
-                    string
-                ]
-                "delimiter": string, le délimiteur de chaque champ dans le fichier iCalendar
-                "groups": les groupes/classes de la filière, réparties par nom (dit affiliation)
-                [
-                    {
-                        "name": string, le nom du groupe auquel chaque cours sera rattaché dans la base de données (affiliation)
-                        "adresses": les URIs de téléchargement des fichiers iCalendar relatifs au cours
-                        [
-                            string
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
-    
-    """
     PARAMS_FILENAME = "params.json"
 
-    with open(PARAMS_FILENAME, 'r') as params_file:
-        params = json.load(params_file)
+    log("Starting to parse the {} file".format(PARAMS_FILENAME), LOG_INFO)
+    params = get_params(PARAMS_FILENAME)
+    log("The parameters were successfully set.", LOG_INFO)
 
-    # database informations
-    host = 'localhost'
-    if 'host' in params["database"]:
-        host = params["database"]["host"]
-    port = 27017
-    if 'port' in params["database"]:
-        port = params["database"]["port"]
-
-    client = MongoClient(host, port)
+    client = MongoClient(params["database"]["host"], params["database"]["port"])
     db_name = params["database"]["name"]
     db = client[db_name]
 
     for branch in params["branches"]:
         collec_name = db_name + "_" + branch["name"]
-        print("Collection " + collec_name)
+        log("Collection {}".format(collec_name), LOG_INFO)
         data_list = []
         parser = EventParser(branch["teachers_patterns"], branch["groups_patterns"],
                              branch["delimiter"])
         for group in branch["groups"]:
             i = 1
             for address in group["addresses"]:
-                print("Downloading address " + str(i) + " in group " + group["name"])
+                log("Downloading address in group {}".format(i, group["name"]), LOG_INFO)
                 ics_file = urllib.request.urlopen(address)
                 cal = Calendar.from_ical(ics_file.read())
-                print("Removing duplicate data of group " + group["name"])
+                log("Removing duplicate data of group {}".format(group["name"]), LOG_INFO)
                 for item in format_data(cal, parser):
                     found = False
                     for data in data_list:
