@@ -1,15 +1,53 @@
 #!/usr/bin/env python
 # coding: utf8
 #
-# Python 3 script : it feeds the Mongo database with current data get from the
-# URLs given in the JSON file as parameters. It downloads an iCalendar file
-# which is parsed to shape the database.
+# Planning Updater, a Python 3 script.
+# This updater updates the database according to different parameters, such as
+# the frequency of the updates or the groups of a school branch.
+# Technically, it feeds the Mongo database with current data get from the URIs
+# given in the JSON file as parameters.
+# It downloads iCalendar files, from the groups in the parameters, which is
+# parsed to reshape the database (getting new courses or updated and removed
+# ones).
+# This script runs all by itself in a Docker container. It still relies on a
+# valid Mongo database.
 
 import urllib.request
+import datetime
 import re
 from icalendar import Calendar
 from pymongo import MongoClient
 import json
+
+LOG_INFO = 0
+LOG_WARNING = 1
+LOG_ERROR = 2
+
+
+def log(msg, lvl=LOG_INFO):
+    """
+    Affiche un message dans l'entrée standard par la fonction print(), avec un
+    formattage spécifique au niveau d'alerte donné (3 possibles).
+    Aucune vérification n'est effectuée sur les arguments de cette méthode.
+
+    Ex :
+    [2018-01-29 19:07:38] [ERROR] Le fichier de paramètres n'existe pas.
+
+    :param msg: string, la description du log
+    :param lvl: LOG_INFO par défaut, le niveau d'alerte levé : info, warning ou error
+    :return: None
+    """
+    alert = "INFO"
+    if lvl == LOG_WARNING:
+        alert = "WARNING"
+    elif lvl == LOG_ERROR:
+        alert = "ERROR"
+    now = datetime.datetime.now()
+    print("[{}] [{}] {}".format(
+        datetime.datetime.strftime(now, "%Y-%m-%d %H:%M:%S"),
+        alert,
+        msg
+    ))
 
 
 def format_data(calendar, planning_parser):
@@ -195,17 +233,60 @@ class EventParser:
 
 
 if __name__ == '__main__':
+    """
+    Description des paramètres récupérés dans le fichier de paramètres JSON.
+
+    {
+        "updater": les paramètres généraux de l'updater
+        {
+            "frequency": int (facultatif), la fréquence en secondes de lancement du script. Pas de récurrence du script si absent.
+        }
+        "database": les paramètres généraux de la base de données mongo
+        {
+            "name": string, le nom de la db du planning dans mongo.
+            "host": string (facultatif), le nom de l'hôte pour la base de données mongo. Par défaut "localhost".
+            "port": int (facultatif), le port de la base de données sur l'hôte mongo. Par défaut 27017.
+        }
+        "branches": les filières à suivre/mettre à jour, chacune ayant une collection dans la base de données du planning
+        [
+            {
+                "name": string, le nom de la collection de la filière dans la base de données
+                "teachers_patterns": les expressions régulières permettant de détecter le nom d'un professeur dans la description complète du cours
+                [
+                    string
+                ]
+                "groups_patterns": les expressions régulières permettant de détecter le nom d'un groupe dans la description complète du cours
+                [
+                    string
+                ]
+                "delimiter": string, le délimiteur de chaque champ dans le fichier iCalendar
+                "groups": les groupes/classes de la filière, réparties par nom (dit affiliation)
+                [
+                    {
+                        "name": string, le nom du groupe auquel chaque cours sera rattaché dans la base de données (affiliation)
+                        "adresses": les URIs de téléchargement des fichiers iCalendar relatifs au cours
+                        [
+                            string
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+    
+    """
     PARAMS_FILENAME = "params.json"
 
     with open(PARAMS_FILENAME, 'r') as params_file:
         params = json.load(params_file)
 
+    # database informations
     host = 'localhost'
-    if 'host' in params:
-        host = params['host']
+    if 'host' in params["database"]:
+        host = params["database"]["host"]
     port = 27017
-    if 'port' in params:
-        port = params['port']
+    if 'port' in params["database"]:
+        port = params["database"]["port"]
 
     client = MongoClient(host, port)
     db_name = params["database"]["name"]
@@ -216,7 +297,7 @@ if __name__ == '__main__':
         print("Collection " + collec_name)
         data_list = []
         parser = EventParser(branch["teachers_patterns"], branch["groups_patterns"],
-                                branch["delimiter"])
+                             branch["delimiter"])
         for group in branch["groups"]:
             i = 1
             for address in group["addresses"]:
