@@ -17,6 +17,9 @@ import datetime
 import re
 from icalendar import Calendar
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
+from pymongo.database import Database
+from sys import exc_info
 import json
 
 LOG_INFO = 0
@@ -150,9 +153,6 @@ def get_params(filename):
             m = "The \"frequency\" in the \"updater\" node is not an int or None."
             log(m, LOG_ERROR)
             raise TypeError(m)
-        else:
-            m = "The \"frequency\" is set to {} seconds.".format(p["updater"]["frequency"])
-            log(m, LOG_INFO)
     except KeyError:
         m = "The \"frequency\" in the \"updater\" node was not found. Setting the default value {}.".format(DEFAULT_FREQUENCY)
         log(m, LOG_WARNING)
@@ -186,9 +186,6 @@ def get_params(filename):
             m = "The \"host\" in the \"database\" node is not a str."
             log(m, LOG_ERROR)
             raise TypeError(m)
-        else:
-            m = "The \"host\" is set to {}.".format(p["database"]["host"])
-            log(m, LOG_INFO)
     except KeyError:
         m = "The \"host\" in the \"database\" node was not found. Setting the default value {}.".format(DEFAULT_HOST)
         log(m, LOG_WARNING)
@@ -200,9 +197,6 @@ def get_params(filename):
             m = "The \"port\" in the \"database\" node is not an int."
             log(m, LOG_ERROR)
             raise TypeError(m)
-        else:
-            m = "The \"port\" is set to {}.".format(p["database"]["port"])
-            log(m, LOG_INFO)
     except KeyError:
         m = "The \"port\" in the \"database\" node was not found. Setting the default value {}.".format(
             DEFAULT_HOST)
@@ -358,7 +352,8 @@ def format_data(calendar, planning_parser):
                 "groups": ["TD1", "TD2"],
                 "teachers": ["Mr Smith"],
                 "undetermined_description_items": ["Ms WÎεrd ϵncöding", "garbage"],
-                "event_id": "ADE4567890123456d89012d456789012d456d89"
+                "event_id": "ADE4567890123456d89012d456789012d456d89",
+                "last_update": datetime.datetime(2017, 25, 08, 23, 40, 02)
             },
             {
                 ...
@@ -382,32 +377,11 @@ def format_data(calendar, planning_parser):
             "groups": planning_parser.get_groups(),
             "teachers": planning_parser.get_teachers(),
             "undetermined_description_items": planning_parser.get_undetermined_description_items(),
-            "event_id": planning_parser.get_event_id()
+            "event_id": planning_parser.get_event_id(),
+            "last_update": planning_parser.get_update_time()
         }
         ret.append(appointment)
     return ret
-
-
-def update_database(event_list, collection):
-    """
-    Compare the list of events given in parameter (formatted like the
-    format_data function) and the data in the database for every events.
-
-    If the event found in the new calendar is different from the event in the
-    database, then the latter is modified with the new data.
-
-    :param event_list: the list of events to insert in the database
-    :param collection: the collection (in the mongo database) to insert data
-    :return: None
-    """
-    for event in event_list:
-        collection.update_one(
-            {"event_id": event["event_id"]},
-            {
-                "$set": event
-            },
-            upsert=True
-        )
 
 
 class EventParser:
@@ -418,14 +392,14 @@ class EventParser:
     The get methods must be used after parsing.
     """
 
-    def __init__(self, teachers_patterns, groups_patterns, description_delimiter):
+    def __init__(self, teachers_patterns, groups_patterns, description_delimiter, update_time):
         """
         Instanciate the object with different parameters.
 
         :param teachers_patterns: the string patterns used to identify a teacher
         :param groups_patterns: the string patterns used to identify a group
-        :param description_delimiter: the delimiter used to split the items in the calendar's
-        description field
+        :param description_delimiter: the delimiter used to split the items in the calendar's description field
+        :param update_time: the datetime of the current updating process, will be set as new values to last_update in every event
         """
 
         self._teachers_patterns = teachers_patterns
@@ -440,6 +414,7 @@ class EventParser:
         self._groups = []
         self._undetermined_description_items = []
         self._event_id = ""
+        self._update_time = update_time
 
     def parse(self, vevent):
         """Return None.
@@ -458,7 +433,7 @@ class EventParser:
         """
 
         self._title = str(vevent["SUMMARY"])
-        self._start_date = vevent["DTSTART"].dt
+        self._start_date = vevent["DTSTART"].dt # TODO remove seconds ?
         self._end_date = vevent["DTEND"].dt
         self._classrooms = []
         for elem in vevent["LOCATION"].split(self._delimiter):
@@ -521,43 +496,160 @@ class EventParser:
         """
         return self._event_id
 
+    def get_update_time(self):
+        """
+        Return the datetime of the current updating process.
+        """
+        return self._update_time
+
+
+def get_modifications(old, new, attributes):
+    """
+    Create a dictionary containing the old values when they are different from
+    the new ones at given attributes.
+    Does not consider other attributes than the array given in parameter.
+
+    :param old: a dictionary containing the old values
+    :param new: a dictionary containing the new values
+    :param attributes: the attributes to check between new and old
+    :return: a dict containing the old values when different from new ones at given attributes
+    """
+    ret = {}
+    for a in attributes:
+        if old[a] != new[a]:
+            print("OLD : {} ; NEW : {}".format(type(old[a]), type(new[a])))
+            ret[a] = old[a]
+    return ret
+
+
+def update_database(event_list, collection):
+    """
+    Compare the list of events given in parameter (formatted like the
+    format_data function) with the data in the database collection given in
+    parameter for every event.
+
+    If the event found in the new calendar is different from the event in the
+    database, then the latter is modified with the new data.
+    The old data is still saved in the event in the "old" parameter, which
+    contains the old parameters which were found as modified at the time.
+
+    :param event_list: the list of events to insert in the database
+    :param collection: the collection (in the mongo database) to insert data
+    :return: None
+    """
+    for event in event_list:
+        old_ev = collection.find_and_modify(
+            query={"event_id": event["event_id"]},
+            update={
+                "$set": event
+            },
+            upsert=True
+        )
+        # put the modifications in the "old" array
+        modifications = get_modifications(old_ev, event, [
+            "title",
+            "start_date",
+            "end_date",
+            "classrooms",
+            "teachers",
+            "groups",
+            "undetermined_description_items"
+        ])
+        modifications["updated"] = event["last_update"]
+        collection.update_one(
+            {"_id": old_ev["_id"]},
+            {
+                "$push": {
+                    "old": modifications
+                }
+            }
+        )
+
+
+def main(db, branches):
+    """
+    Make the update for every group in every branch :
+    - Download the group iCalendars files from the URIs
+    - Parse the files to order the information in a computable dictionary
+    - Update the database according to the new, updated and deleted courses
+
+    The branches parameter comes from the get_params function and must match
+    the pattern.
+
+    :param db: the database from the MongoClient object to update
+    :param branches: list, the branches with information to make the update
+    :return: None
+    """
+    if type(db) is not Database:
+        m = "The PyMongo database given was not recognized."
+        log(m, LOG_ERROR)
+        raise TypeError(m)
+    if type(branches) is not list:
+        m = "The parameter branches is not a list type. Does it really come from the get_params function ?"
+        log(m, LOG_ERROR)
+        raise TypeError(m)
+
+    try:
+        update_time = datetime.datetime.now()
+        for branch in branches:
+            collec_name = db_name + "_" + branch["name"]
+            log("Collection {}".format(collec_name), LOG_INFO)
+            data_list = []
+            parser = EventParser(branch["teachers_patterns"], branch["groups_patterns"], branch["delimiter"], update_time)
+            for group in branch["groups"]:
+                i = 1
+                for address in group["addresses"]:
+                    log("Downloading address in group {}".format(i, group["name"]), LOG_INFO)
+                    ics_file = urllib.request.urlopen(address)
+                    cal = Calendar.from_ical(ics_file.read())
+                    log("Removing duplicate data of group {}".format(group["name"]), LOG_INFO)
+                    for item in format_data(cal, parser):
+                        found = False
+                        for data in data_list:
+                            if item["event_id"] == data["event_id"]:
+                                # adds the current group to the affiliations
+                                data["affiliation"].append(group["name"])
+                                found = True
+                                break
+                        if found is False:
+                            item["affiliation"] = [group["name"]]
+                            data_list.append(item)
+                    i += 1
+
+            log("Updating data in collection " + collec_name)
+            update_database(data_list, db[collec_name])
+    except PyMongoError as e:
+        m = "Got an error from the PyMongo database during the updating process."
+        log(m, LOG_ERROR)
+        raise e
+    except:
+        m = "An unexpected error occured in the updating process."
+        log(m, LOG_ERROR)
+        raise exc_info()[1]
+    else:
+        log("The update ended successfully.", LOG_INFO)
+
 
 if __name__ == '__main__':
     PARAMS_FILENAME = "params.json"
 
-    log("Starting to parse the {} file".format(PARAMS_FILENAME), LOG_INFO)
+    log("Starting to parse the {} file".format(PARAMS_FILENAME))
     params = get_params(PARAMS_FILENAME)
-    log("The parameters were successfully set.", LOG_INFO)
+    log("The parameters were successfully set.")
+    log("The updater frequency parameter is set to {}.".format(params["updater"]["frequency"]))
+    log("The database host parameter is set to {}.".format(params["database"]["host"]))
+    log("The database port parameter is set to {}.".format(params["database"]["port"]))
 
     client = MongoClient(params["database"]["host"], params["database"]["port"])
+
     db_name = params["database"]["name"]
     db = client[db_name]
 
-    for branch in params["branches"]:
-        collec_name = db_name + "_" + branch["name"]
-        log("Collection {}".format(collec_name), LOG_INFO)
-        data_list = []
-        parser = EventParser(branch["teachers_patterns"], branch["groups_patterns"],
-                             branch["delimiter"])
-        for group in branch["groups"]:
-            i = 1
-            for address in group["addresses"]:
-                log("Downloading address in group {}".format(i, group["name"]), LOG_INFO)
-                ics_file = urllib.request.urlopen(address)
-                cal = Calendar.from_ical(ics_file.read())
-                log("Removing duplicate data of group {}".format(group["name"]), LOG_INFO)
-                for item in format_data(cal, parser):
-                    found = False
-                    for data in data_list:
-                        if item["event_id"] == data["event_id"]:
-                            # adds the current group to the affiliations
-                            data["affiliation"].append(group["name"])
-                            found = True
-                            break
-                    if found is False:
-                        item["affiliation"] = [group["name"]]
-                        data_list.append(item)
-                i += 1
+    # TODO delete the events from the database which didn't get the "last_update" after updating the db
 
-        print("Updating data in collection " + collec_name)
-        update_database(data_list, db[collec_name])
+    # TODO remove the "(Exporté le: ...)" and the "" in events (which are just garbage)
+
+    # TODO schedule the main function every params["updater"]["frequency"] seconds
+    main(db, params["branches"])
+
+    # TODO detect when the parameters file is modified ?
