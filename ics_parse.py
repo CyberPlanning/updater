@@ -13,6 +13,7 @@
 # valid Mongo database.
 
 import urllib.request
+from urllib.error import URLError
 import datetime
 import re
 from icalendar import Calendar
@@ -94,6 +95,10 @@ def get_params(filename):
                 "groups_patterns": les expressions régulières permettant de détecter le nom d'un groupe dans la description complète du cours
                 [
                     string
+                ]
+                "blacklist": les expressions régulières permettant de ne pas inclure les expressions, séparées par le délimiteur, correspondantes de la description
+                [
+                    string (facultatif)
                 ]
                 "delimiter": string (facultatif), le délimiteur de chaque champ dans le fichier iCalendar. Par défaut "\n".
                 "groups": les groupes/classes de la filière, réparties par nom (dit affiliation)
@@ -266,6 +271,19 @@ def get_params(filename):
             log(m, LOG_ERROR)
             raise e
 
+        # BRANCHES NODE BLACKLIST
+        try:
+            p_i = 0
+            for blacklisted in b["blacklist"]:
+                if type(blacklisted) is not str:
+                    m = "The element at position {} in \"blacklist\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
+                    log(m, LOG_ERROR)
+                    raise TypeError(m)
+        except KeyError as e:
+            m = "The \"blacklist\" in the node at position {} in \"branches\" was not found.".format(b_i)
+            log(m, LOG_ERROR)
+            raise e
+
         # BRANCHES NODE DELIMITER
         try:
             if type(b["delimiter"]) is not str:
@@ -392,16 +410,18 @@ class EventParser:
     The get methods must be used after parsing.
     """
 
-    def __init__(self, teachers_patterns, groups_patterns, description_delimiter, update_time):
+    def __init__(self, blacklist, teachers_patterns, groups_patterns, description_delimiter, update_time):
         """
         Instanciate the object with different parameters.
 
+        :param blacklist: the string patterns used to blacklist items not desired
         :param teachers_patterns: the string patterns used to identify a teacher
         :param groups_patterns: the string patterns used to identify a group
         :param description_delimiter: the delimiter used to split the items in the calendar's description field
         :param update_time: the datetime of the current updating process, will be set as new values to last_update in every event
         """
 
+        self._blacklist = blacklist
         self._teachers_patterns = teachers_patterns
         self._groups_patterns = groups_patterns
         self._delimiter = description_delimiter
@@ -433,8 +453,8 @@ class EventParser:
         """
 
         self._title = str(vevent["SUMMARY"])
-        self._start_date = vevent["DTSTART"].dt # TODO remove seconds ?
-        self._end_date = vevent["DTEND"].dt
+        self._start_date = vevent["DTSTART"].dt.replace(tzinfo=None)  # tzinfo=None to remove the UTC timezone, which is useless and source of conflict with PyMongo
+        self._end_date = vevent["DTEND"].dt.replace(tzinfo=None)
         self._classrooms = []
         for elem in vevent["LOCATION"].split(self._delimiter):
             if len(elem) != 0:
@@ -443,20 +463,26 @@ class EventParser:
         self._groups = []
         self._undetermined_description_items = []
         for elem in vevent["DESCRIPTION"].split(self._delimiter):
-            found = False
-            for pattern in self._teachers_patterns:
-                if re.match(pattern, elem) is not None:
-                    self._teachers.append(elem)
-                    found = True
-                    break
-            if not found:
-                for pattern in self._groups_patterns:
+            if elem != "":
+                found = False
+                for pattern in self._blacklist:
                     if re.match(pattern, elem) is not None:
-                        self._groups.append(elem)
                         found = True
                         break
-            if not found:
-                self._undetermined_description_items.append(elem)
+                if not found:
+                    for pattern in self._teachers_patterns:
+                        if re.match(pattern, elem) is not None:
+                            self._teachers.append(elem)
+                            found = True
+                            break
+                    if not found:
+                        for pattern in self._groups_patterns:
+                            if re.match(pattern, elem) is not None:
+                                self._groups.append(elem)
+                                found = True
+                                break
+                    if not found:
+                        self._undetermined_description_items.append(elem)
         self._event_id = str(vevent["UID"])
 
     def get_title(self):
@@ -517,7 +543,6 @@ def get_modifications(old, new, attributes):
     ret = {}
     for a in attributes:
         if old[a] != new[a]:
-            print("OLD : {} ; NEW : {}".format(type(old[a]), type(new[a])))
             ret[a] = old[a]
     return ret
 
@@ -530,8 +555,9 @@ def update_database(event_list, collection):
 
     If the event found in the new calendar is different from the event in the
     database, then the latter is modified with the new data.
-    The old data is still saved in the event in the "old" parameter, which
-    contains the old parameters which were found as modified at the time.
+    The old data is still saved in the document in the "old" parameter, which
+    contains the old parameters which were found as modified at the time
+    "updated".
 
     :param event_list: the list of events to insert in the database
     :param collection: the collection (in the mongo database) to insert data
@@ -545,25 +571,27 @@ def update_database(event_list, collection):
             },
             upsert=True
         )
-        # put the modifications in the "old" array
-        modifications = get_modifications(old_ev, event, [
-            "title",
-            "start_date",
-            "end_date",
-            "classrooms",
-            "teachers",
-            "groups",
-            "undetermined_description_items"
-        ])
-        modifications["updated"] = event["last_update"]
-        collection.update_one(
-            {"_id": old_ev["_id"]},
-            {
-                "$push": {
-                    "old": modifications
-                }
-            }
-        )
+        if old_ev is not None:
+            # put the modifications in the "old" array
+            modifications = get_modifications(old_ev, event, [
+                "title",
+                "start_date",
+                "end_date",
+                "classrooms",
+                "teachers",
+                "groups",
+                "undetermined_description_items"
+            ])
+            if len(modifications) != 0:
+                modifications["updated"] = event["last_update"]
+                collection.update_one(
+                    {"_id": old_ev["_id"]},
+                    {
+                        "$push": {
+                            "old": modifications
+                        }
+                    }
+                )
 
 
 def main(db, branches):
@@ -595,12 +623,17 @@ def main(db, branches):
             collec_name = db_name + "_" + branch["name"]
             log("Collection {}".format(collec_name), LOG_INFO)
             data_list = []
-            parser = EventParser(branch["teachers_patterns"], branch["groups_patterns"], branch["delimiter"], update_time)
+            parser = EventParser(branch["blacklist"], branch["teachers_patterns"], branch["groups_patterns"], branch["delimiter"], update_time)
             for group in branch["groups"]:
                 i = 1
                 for address in group["addresses"]:
                     log("Downloading address in group {}".format(i, group["name"]), LOG_INFO)
-                    ics_file = urllib.request.urlopen(address)
+                    try:
+                        ics_file = urllib.request.urlopen(address)
+                    except URLError as e:
+                        m = "Error requesting URI {}".format(address)
+                        log(m, LOG_ERROR)
+                        raise e
                     cal = Calendar.from_ical(ics_file.read())
                     log("Removing duplicate data of group {}".format(group["name"]), LOG_INFO)
                     for item in format_data(cal, parser):
