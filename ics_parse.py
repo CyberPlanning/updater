@@ -16,6 +16,7 @@ import urllib.request
 from urllib.error import URLError
 import datetime
 import re
+import sched
 from icalendar import Calendar
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
@@ -87,7 +88,7 @@ def get_params(filename):
         "branches": les filières à suivre/mettre à jour, chacune ayant une collection dans la base de données du planning, donc les noms doivent être différents
         [
             {
-                "name": string, le nom de la collection de la filière dans la base de données
+                "name": string, le nom attribué aux collections de la filière dans la base de données
                 "teachers_patterns": les expressions régulières permettant de détecter le nom d'un professeur dans la description complète du cours
                 [
                     string
@@ -561,8 +562,11 @@ def update_database(event_list, collection):
 
     :param event_list: the list of events to insert in the database
     :param collection: the collection (in the mongo database) to insert data
-    :return: None
+    :return: a tuple containing (number of new events, number of updated events, number of unchanged events), note the deleted events aren't counted here
     """
+    new = 0
+    updated = 0
+    unchanged = 0
     for event in event_list:
         old_ev = collection.find_and_modify(
             query={"event_id": event["event_id"]},
@@ -583,6 +587,7 @@ def update_database(event_list, collection):
                 "undetermined_description_items"
             ])
             if len(modifications) != 0:
+                updated += 1
                 modifications["updated"] = event["last_update"]
                 collection.update_one(
                     {"_id": old_ev["_id"]},
@@ -592,6 +597,43 @@ def update_database(event_list, collection):
                         }
                     }
                 )
+            else:
+                unchanged += 1
+        else:
+            new += 1
+
+    return new, updated, unchanged
+
+
+def garbage_collect(start_collec, garbage_collec, last_update):
+    """
+    Remove the events from the start_collec collection which do not have the
+    same last_update as the current one.
+    The removed events are put in the garbage_collec collection for log
+    purposes.
+
+    :param start_collec: the mongo collection from where the events are removed
+    :param garbage_collec: the collection to put the removed events from the start_collec
+    :param last_update: the last update of the events : if they weren't updated from this one, they are considered deleted
+    :return: the number of events collected
+    """
+    collected = 0
+
+    garbage = start_collec.find({"last_update": {"$lt": last_update}})
+    if garbage.count() != 0:
+        # Bulk operations can take a lot of memory, stay aware of this and, if something happen, see here https://stackoverflow.com/questions/27039083/mongodb-move-documents-from-one-collection-to-another-collection
+        bulk_remove = start_collec.initialize_unordered_bulk_op()
+        bulk_insert = garbage_collec.initialize_unordered_bulk_op()
+
+        for g in garbage:
+            collected += 1
+            bulk_insert.insert(g)
+            bulk_remove.find({"_id": g["_id"]}).remove_one()
+
+        bulk_insert.execute()
+        bulk_remove.execute()
+
+    return collected
 
 
 def main(db, branches):
@@ -620,22 +662,29 @@ def main(db, branches):
     try:
         update_time = datetime.datetime.now()
         for branch in branches:
-            collec_name = db_name + "_" + branch["name"]
-            log("Collection {}".format(collec_name), LOG_INFO)
+            collec_name = "planning_" + branch["name"]
+            garbage_collec_name = "garbage_" + branch["name"]
+            log_prefix = "[{}]".format(branch["name"])
+            log("{} Starting the update for the branch {}".format(log_prefix, branch["name"]))
             data_list = []
             parser = EventParser(branch["blacklist"], branch["teachers_patterns"], branch["groups_patterns"], branch["delimiter"], update_time)
+            nb_groups = len(branch["groups"])
+            k = 1
             for group in branch["groups"]:
+                log_prefix_group = "[{}/{}]".format(k, nb_groups)
                 i = 1
+                nb_addresses = len(group["addresses"])
                 for address in group["addresses"]:
-                    log("Downloading address in group {}".format(i, group["name"]), LOG_INFO)
+                    log_prefix_address = "[{}/{}]".format(i, nb_addresses)
+                    log("{} {} {} Downloading address in group {}".format(log_prefix, log_prefix_group, log_prefix_address, group["name"]))
                     try:
                         ics_file = urllib.request.urlopen(address)
                     except URLError as e:
-                        m = "Error requesting URI {}".format(address)
+                        m = "{} Error requesting URI {}".format(log_prefix, address)
                         log(m, LOG_ERROR)
                         raise e
                     cal = Calendar.from_ical(ics_file.read())
-                    log("Removing duplicate data of group {}".format(group["name"]), LOG_INFO)
+                    log("{} {} {} Removing duplicate data".format(log_prefix, log_prefix_group, log_prefix_address))
                     for item in format_data(cal, parser):
                         found = False
                         for data in data_list:
@@ -648,19 +697,25 @@ def main(db, branches):
                             item["affiliation"] = [group["name"]]
                             data_list.append(item)
                     i += 1
+                k += 1
 
-            log("Updating data in collection " + collec_name)
-            update_database(data_list, db[collec_name])
+            log("{} Updating new and modified events in {}".format(log_prefix, collec_name))
+            new, updated, unchanged = update_database(data_list, db[collec_name])
+            log("{} Update complete : {} newly created events, {} updated events, {} unchanged events".format(log_prefix, new, updated, unchanged))
+            log("{} Collecting garbage events from {} and storing them in {}".format(log_prefix, collec_name, garbage_collec_name))
+            collected = garbage_collect(db[collec_name], db[garbage_collec_name], update_time)
+            log("{} Garbage collection complete : {} events collected".format(log_prefix, collected))
+            log("{} There are {} events in {}".format(log_prefix, new + updated + unchanged, collec_name))
+            log("{} There are {} events in {}".format(log_prefix, db[garbage_collec_name].count({}), garbage_collec_name))
+            log("{} The update ended successfully".format(log_prefix), LOG_INFO)
     except PyMongoError as e:
-        m = "Got an error from the PyMongo database during the updating process."
+        m = "Got an error from the PyMongo database during the updating process"
         log(m, LOG_ERROR)
         raise e
     except:
-        m = "An unexpected error occured in the updating process."
+        m = "An unexpected error occured in the updating process"
         log(m, LOG_ERROR)
         raise exc_info()[1]
-    else:
-        log("The update ended successfully.", LOG_INFO)
 
 
 if __name__ == '__main__':
@@ -669,7 +724,7 @@ if __name__ == '__main__':
     log("Starting to parse the {} file".format(PARAMS_FILENAME))
     params = get_params(PARAMS_FILENAME)
     log("The parameters were successfully set.")
-    log("The updater frequency parameter is set to {}.".format(params["updater"]["frequency"]))
+    log("The updater frequency parameter is set to {} seconds.".format(params["updater"]["frequency"]))
     log("The database host parameter is set to {}.".format(params["database"]["host"]))
     log("The database port parameter is set to {}.".format(params["database"]["port"]))
 
@@ -678,11 +733,13 @@ if __name__ == '__main__':
     db_name = params["database"]["name"]
     db = client[db_name]
 
-    # TODO delete the events from the database which didn't get the "last_update" after updating the db
-
-    # TODO remove the "(Exporté le: ...)" and the "" in events (which are just garbage)
-
-    # TODO schedule the main function every params["updater"]["frequency"] seconds
     main(db, params["branches"])
 
-    # TODO detect when the parameters file is modified ?
+    delay = params["updater"]["frequency"]
+    if delay is not None:
+        while True:
+            # the schedule delay starts only when the branch updates are finished
+            log("Scheduling the next update (in {} seconds)...".format(delay))
+            s = sched.scheduler()
+            s.enter(delay, 1, main, (db, params["branches"]))
+            s.run(blocking=True)
