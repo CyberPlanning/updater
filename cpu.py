@@ -12,6 +12,7 @@
 # This script runs all by itself in a Docker container. It still relies on a
 # valid Mongo database.
 
+from errors import *
 import urllib.request
 from urllib.error import URLError
 import datetime
@@ -78,6 +79,7 @@ def get_params(filename):
         "updater": les paramètres généraux de l'updater
         {
             "frequency": int (facultatif), la fréquence en secondes de lancement du script. Pas de récurrence du script si absent.
+            "error_tolerance": int, le nombre d'erreurs tolérées à la suite : si n updates ont été lancées à la suite et chacune se terminait par une erreur, le script s'arrête
         }
         "database": les paramètres généraux de la base de données mongo
         {
@@ -118,6 +120,7 @@ def get_params(filename):
 
     :param filename: the path of the JSON file containing the parameters
     :return: an object similar to the JSON pattern
+    :raise errors.ParamError: when a parameter isn't present, isn't a correct type or isn't valid
     """
 
     # get the file JSON structure
@@ -128,70 +131,85 @@ def get_params(filename):
     except SyntaxError as e:
         m = "The path of the params file {} might not be valid.".format(filename)
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
     except FileNotFoundError as e:
         m = "The JSON params file {} was not found.".format(filename)
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
     except json.decoder.JSONDecodeError as e:
         m = "The JSON params file {} couldn't be decoded.".format(filename)
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
     except OSError as e:
         m = "Unknown error while using the JSON params file {}.".format(filename)
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
 
     # UPDATER
     try:
         if type(p["updater"]) is not dict:
             m = "The \"updater\" node is not a dictionary in the JSON params file."
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
     except KeyError as e:
         m = "The \"updater\" node not found in the JSON params file."
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
 
     # UPDATER FREQUENCY
     try:
         if type(p["updater"]["frequency"]) is not int and p["updater"]["frequency"] is not None:
             m = "The \"frequency\" in the \"updater\" node is not an int or None."
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
     except KeyError:
         m = "The \"frequency\" in the \"updater\" node was not found. Setting the default value {}.".format(DEFAULT_FREQUENCY)
         log(m, LOG_WARNING)
         p["updater"]["frequency"] = DEFAULT_FREQUENCY
+
+    # UPDATER ERROR_TOLERANCE
+    try:
+        if type(p["updater"]["error_tolerance"]) is not int:
+            m = "The \"error_tolerance\" in the \"updater\" node is not an int."
+            log(m, LOG_ERROR)
+            raise ParamError(m)
+        if p["updater"]["error_tolerance"] < 0:
+            m = "The \"error_tolerance\" in the \"updater\" node is not positive or zero."
+            log(m, LOG_ERROR)
+            raise ParamError(m)
+    except KeyError as e:
+        m = "The\"error_tolerance\" in the \"updater\" node was not found."
+        log(m, LOG_ERROR)
+        raise ParamError(m).with_traceback(e)
 
     # DATABASE
     try:
         if type(p["database"]) is not dict:
             m = "The \"database\" node is not a dictionary in the JSON params file."
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
     except KeyError as e:
         m = "The \"database\" node not found in the JSON params file."
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
 
     # DATABASE NAME
     try:
         if type(p["database"]["name"]) is not str:
             m = "The \"name\" in the \"database\" node is not a str."
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
     except KeyError as e:
         m = "The \"name\" in the \"database\" node was not found."
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
 
     # DATABASE HOST
     try:
         if type(p["database"]["host"]) is not str:
             m = "The \"host\" in the \"database\" node is not a str."
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
     except KeyError:
         m = "The \"host\" in the \"database\" node was not found. Setting the default value {}.".format(DEFAULT_HOST)
         log(m, LOG_WARNING)
@@ -202,7 +220,7 @@ def get_params(filename):
         if type(p["database"]["port"]) is not int:
             m = "The \"port\" in the \"database\" node is not an int."
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
     except KeyError:
         m = "The \"port\" in the \"database\" node was not found. Setting the default value {}.".format(
             DEFAULT_HOST)
@@ -214,11 +232,11 @@ def get_params(filename):
         if type(p["branches"]) is not list:
             m = "The \"branches\" node is not a dictionary in the JSON params file."
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
     except KeyError as e:
         m = "The \"branches\" node not found in the JSON params file."
         log(m, LOG_ERROR)
-        raise e
+        raise ParamError(m).with_traceback(e)
 
     # BRANCHES NODES
     b_i = 0
@@ -227,23 +245,23 @@ def get_params(filename):
         if type(b) is not dict:
             m = "The node at position {} in \"branches\" is not a dict.".format(b_i)
             log(m, LOG_ERROR)
-            raise TypeError(m)
+            raise ParamError(m)
 
         # BRANCHES NODE NAME
         try:
             if type(b["name"]) is not str:
                 m = "The \"name\" in the node at position {} in \"branches\" is not a str.".format(b_i)
                 log(m, LOG_ERROR)
-                raise TypeError(m)
+                raise ParamError(m)
             elif b["name"] in branch_names:
                 m = "The \"name\" in the node at position {} in \"branches\" already exists !".format(b_i)
                 log(m, LOG_ERROR)
-                raise TypeError(m)
+                raise ParamError(m)
             branch_names.append(b["name"])
         except KeyError as e:
             m = "The \"name\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise e
+            raise ParamError(m).with_traceback(e)
 
         # BRANCHES NODE TEACHERS_PATTERNS
         try:
@@ -252,12 +270,12 @@ def get_params(filename):
                 if type(pattern) is not str:
                     m = "The element at position {} in \"teachers_patterns\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
                     log(m, LOG_ERROR)
-                    raise TypeError(m)
+                    raise ParamError(m)
                 p_i += 1
         except KeyError as e:
             m = "The \"teachers_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise e
+            raise ParamError(m).with_traceback(e)
 
         # BRANCHES NODE GROUPS_PATTERNS
         try:
@@ -266,11 +284,11 @@ def get_params(filename):
                 if type(pattern) is not str:
                     m = "The element at position {} in \"groups_patterns\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
                     log(m, LOG_ERROR)
-                    raise TypeError(m)
+                    raise ParamError(m)
         except KeyError as e:
             m = "The \"groups_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise e
+            raise ParamError(m).with_traceback(e)
 
         # BRANCHES NODE BLACKLIST
         try:
@@ -279,18 +297,18 @@ def get_params(filename):
                 if type(blacklisted) is not str:
                     m = "The element at position {} in \"blacklist\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
                     log(m, LOG_ERROR)
-                    raise TypeError(m)
+                    raise ParamError(m)
         except KeyError as e:
             m = "The \"blacklist\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise e
+            raise ParamError(m).with_traceback(e)
 
         # BRANCHES NODE DELIMITER
         try:
             if type(b["delimiter"]) is not str:
                 m = "The \"delimiter\" in the node at position {} in \"branches\" is not str.".format(b_i)
                 log(m, LOG_ERROR)
-                raise TypeError(m)
+                raise ParamError(m)
         except KeyError as e:
             m = "The \"delimiter\" in the node at position {} in \"branches\" was not found. Setting the default value {}.".format(b_i, DEFAULT_DELIMITER)
             log(m, LOG_WARNING)
@@ -304,49 +322,49 @@ def get_params(filename):
                 if type(g) is not dict:
                     m = "The node at position {} in \"groups\" in the node at position {} in \"branches\" is not a dict.".format(g_i, b_i)
                     log(m, LOG_ERROR)
-                    raise TypeError(m)
+                    raise ParamError(m)
 
                 # BRANCHES NODE GROUP NAME
                 try:
                     if type(g["name"]) is not str:
                         m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a str".format(g_i, b_i)
                         log(m, LOG_ERROR)
-                        raise TypeError(m)
+                        raise ParamError(m)
                     if g["name"] in g_names:
                         m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" already exists !".format(g_i, b_i)
                         log(m, LOG_ERROR)
-                        raise TypeError(m)
+                        raise ParamError(m)
                     g_names.append(g["name"])
                 except KeyError as e:
                     m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
                     log(m, LOG_ERROR)
-                    raise e
+                    raise ParamError(m).with_traceback(e)
 
                 # BRANCHES NODE GROUP ADDRESSES
                 try:
                     if type(g["addresses"]) is not list:
                         m = "The \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a list.".format(g_i, b_i)
                         log(m, LOG_ERROR)
-                        raise TypeError(m)
+                        raise ParamError(m)
                     for a in g["addresses"]:
                         if type(a) is not str:
                             m = "An element in \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a str.".format(g_i, b_i)
                             log(m, LOG_ERROR)
-                            raise TypeError(m)
+                            raise ParamError(m)
                         if not re.match("http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+", a):
                             m = "An element in \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" does not match the URI regex.".format(g_i, b_i)
                             log(m, LOG_ERROR)
-                            raise ValueError(m)
+                            raise ParamError(m)
                 except KeyError as e:
                     m = "The \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
                     log(m, LOG_ERROR)
-                    raise e
+                    raise ParamError(m).with_traceback(e)
 
                 g_i += 1
         except KeyError as e:
             m = "The \"groups\" list in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise e
+            raise ParamError(m).with_traceback(e)
 
         b_i += 1
 
@@ -563,18 +581,24 @@ def update_database(event_list, collection):
     :param event_list: the list of events to insert in the database
     :param collection: the collection (in the mongo database) to insert data
     :return: a tuple containing (number of new events, number of updated events, number of unchanged events), note the deleted events aren't counted here
+    :raise errors.UpdateDatabaseError: when the updates raised a PyMongoError
     """
     new = 0
     updated = 0
     unchanged = 0
     for event in event_list:
-        old_ev = collection.find_and_modify(
-            query={"event_id": event["event_id"]},
-            update={
-                "$set": event
-            },
-            upsert=True
-        )
+        try:
+            old_ev = collection.find_and_modify(
+                query={"event_id": event["event_id"]},
+                update={
+                    "$set": event
+                },
+                upsert=True
+            )
+        except PyMongoError as e:
+            m = "Error while updating collection {}".format(collection)
+            raise UpdateDatabaseError(m).with_traceback(e)
+
         if old_ev is not None:
             # put the modifications in the "old" array
             modifications = get_modifications(old_ev, event, [
@@ -589,14 +613,18 @@ def update_database(event_list, collection):
             if len(modifications) != 0:
                 updated += 1
                 modifications["updated"] = event["last_update"]
-                collection.update_one(
-                    {"_id": old_ev["_id"]},
-                    {
-                        "$push": {
-                            "old": modifications
+                try:
+                    collection.update_one(
+                        {"_id": old_ev["_id"]},
+                        {
+                            "$push": {
+                                "old": modifications
+                            }
                         }
-                    }
-                )
+                    )
+                except PyMongoError as e:
+                    m = "Error while pushing modifications in collection {}".format(collection)
+                    raise UpdateDatabaseError(m).with_traceback(e)
             else:
                 unchanged += 1
         else:
@@ -616,6 +644,7 @@ def garbage_collect(start_collec, garbage_collec, last_update):
     :param garbage_collec: the collection to put the removed events from the start_collec
     :param last_update: the last update of the events : if they weren't updated from this one, they are considered deleted
     :return: the number of events collected
+    :raise errors.UpdateDatabaseError: when the bulk insert or the bulk remove raises a PyMongoError
     """
     collected = 0
 
@@ -627,8 +656,16 @@ def garbage_collect(start_collec, garbage_collec, last_update):
 
         for g in garbage:
             collected += 1
-            bulk_insert.insert(g)
-            bulk_remove.find({"_id": g["_id"]}).remove_one()
+            try:
+                bulk_insert.insert(g)
+            except PyMongoError as e:
+                m = "Error while inserting to collection {}".format(garbage_collec)
+                raise UpdateDatabaseError(m).with_traceback(e)
+            try:
+                bulk_remove.find({"_id": g["_id"]}).remove_one()
+            except PyMongoError as e:
+                m = "Error while removing from collection {}".format(start_collec)
+                raise UpdateDatabaseError(m).with_traceback(e)
 
         bulk_insert.execute()
         bulk_remove.execute()
@@ -649,6 +686,10 @@ def main(db, branches):
     :param db: the database from the MongoClient object to update
     :param branches: list, the branches with information to make the update
     :return: None
+    :raise TypeError: if db is not a Database
+    :raise TypeError: if branches is not a list
+    :raise DownloadError: when the download isn't valid (5 attempts by default are set)
+    :raise UpdateDatabaseError: when a database update goes wrong
     """
     if type(db) is not Database:
         m = "The PyMongo database given was not recognized."
@@ -676,15 +717,35 @@ def main(db, branches):
                 nb_addresses = len(group["addresses"])
                 for address in group["addresses"]:
                     log_prefix_address = "[{}/{}]".format(i, nb_addresses)
-                    log("{} {} {} Downloading address in group {}".format(log_prefix, log_prefix_group, log_prefix_address, group["name"]))
-                    try:
-                        ics_file = urllib.request.urlopen(address)
-                    except URLError as e:
-                        m = "{} Error requesting URI {}".format(log_prefix, address)
+                    cal = None
+                    attempts = 0
+                    max_attempts = 5
+                    while attempts < max_attempts:
+                        log("{} {} {} Downloading address in group {}".format(
+                            log_prefix, log_prefix_group, log_prefix_address,
+                            group["name"]))
+                        try:
+                            ics_file = urllib.request.urlopen(address)
+                        except URLError as e:
+                            m = "{} Error requesting URI {}".format(log_prefix,
+                                                                    address)
+                            log(m, LOG_ERROR)
+                            raise DownloadError(m).with_traceback(e)
+                        ics = ics_file.read()
+
+                        try:
+                            cal = Calendar.from_ical(ics)
+                            break
+                        except ValueError as e:
+                            attempts += 1
+                            m = "{} Failed to download a calendar file ({}/{})".format(log_prefix, attempts, max_attempts)
+                            log(m, LOG_WARNING)
+                    if attempts == max_attempts:
+                        m = "{} Failed to download from the URI {}".format(log_prefix, address)
                         log(m, LOG_ERROR)
-                        raise e
-                    cal = Calendar.from_ical(ics_file.read())
-                    log("{} {} {} Removing duplicate data".format(log_prefix, log_prefix_group, log_prefix_address))
+                        raise DownloadError(m)
+
+                    log("{} {} {} Removing duplicate events".format(log_prefix, log_prefix_group, log_prefix_address))
                     for item in format_data(cal, parser):
                         found = False
                         for data in data_list:
@@ -707,9 +768,13 @@ def main(db, branches):
             log("{} Garbage collection complete : {} events collected".format(log_prefix, collected))
             log("{} There are {} events in {}".format(log_prefix, new + updated + unchanged, collec_name))
             log("{} There are {} events in {}".format(log_prefix, db[garbage_collec_name].count({}), garbage_collec_name))
-            log("{} The update ended successfully".format(log_prefix), LOG_INFO)
-    except PyMongoError as e:
-        m = "Got an error from the PyMongo database during the updating process"
+            log("{} The updater ended successfully".format(log_prefix), LOG_INFO)
+    except UpdateDatabaseError as e:
+        m = "Error while updating the database"
+        log(m, LOG_ERROR)
+        raise e
+    except DownloadError as e:
+        m = "Error while download the files"
         log(m, LOG_ERROR)
         raise e
     except:
@@ -722,7 +787,12 @@ if __name__ == '__main__':
     PARAMS_FILENAME = "params.json"
 
     log("Starting to parse the {} file".format(PARAMS_FILENAME))
-    params = get_params(PARAMS_FILENAME)
+    try:
+        params = get_params(PARAMS_FILENAME)
+    except ParamError as e:
+        m = "An error occured, please check the parameters before launching the script again"
+        log(m, LOG_ERROR)
+        raise e
     log("The parameters were successfully set.")
     log("The updater frequency parameter is set to {} seconds.".format(params["updater"]["frequency"]))
     log("The database host parameter is set to {}.".format(params["database"]["host"]))
@@ -737,9 +807,24 @@ if __name__ == '__main__':
 
     delay = params["updater"]["frequency"]
     if delay is not None:
+        errors = 0
         while True:
-            # the schedule delay starts only when the branch updates are finished
-            log("Scheduling the next update (in {} seconds)...".format(delay))
-            s = sched.scheduler()
-            s.enter(delay, 1, main, (db, params["branches"]))
-            s.run(blocking=True)
+            try:
+                # the schedule delay starts only when the branch updates are finished
+                log("Scheduling the next update (in {} seconds)...".format(delay))
+                s = sched.scheduler()
+                s.enter(delay, 1, main, (db, params["branches"]))
+                try:
+                    s.run(blocking=True)
+                except UpdaterError as e:
+                    errors += 1
+                    m = "An error happened in this updater instance ({}/{} in a row)".format(errors, params["updater"]["error_tolerance"])
+                    log(m, LOG_WARNING)
+                    if errors == params["updater"]["error_tolerance"]:
+                        m = "Reached the maximum number of errors tolered in a row. The script will totally stop."
+                        log(m, LOG_WARNING)
+                        break
+            except:
+                m = "A global error happened, that's bad ! The script is broken."
+                log(m, LOG_ERROR)
+                raise exc_info()[1]
