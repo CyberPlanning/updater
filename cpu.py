@@ -131,19 +131,19 @@ def get_params(filename):
     except SyntaxError as e:
         m = "The path of the params file {} might not be valid.".format(filename)
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
     except FileNotFoundError as e:
         m = "The JSON params file {} was not found.".format(filename)
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
     except json.decoder.JSONDecodeError as e:
         m = "The JSON params file {} couldn't be decoded.".format(filename)
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
     except OSError as e:
         m = "Unknown error while using the JSON params file {}.".format(filename)
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
 
     # UPDATER
     try:
@@ -154,14 +154,14 @@ def get_params(filename):
     except KeyError as e:
         m = "The \"updater\" node not found in the JSON params file."
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
 
     # UPDATER FREQUENCY
     try:
         if type(p["updater"]["frequency"]) is not int and p["updater"]["frequency"] is not None:
             m = "The \"frequency\" in the \"updater\" node is not an int or None."
             log(m, LOG_ERROR)
-            raise ParamError(m)
+            raise ParamError(m, e)
     except KeyError:
         m = "The \"frequency\" in the \"updater\" node was not found. Setting the default value {}.".format(DEFAULT_FREQUENCY)
         log(m, LOG_WARNING)
@@ -180,7 +180,7 @@ def get_params(filename):
     except KeyError as e:
         m = "The\"error_tolerance\" in the \"updater\" node was not found."
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
 
     # DATABASE
     try:
@@ -191,7 +191,7 @@ def get_params(filename):
     except KeyError as e:
         m = "The \"database\" node not found in the JSON params file."
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
 
     # DATABASE NAME
     try:
@@ -202,7 +202,7 @@ def get_params(filename):
     except KeyError as e:
         m = "The \"name\" in the \"database\" node was not found."
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
 
     # DATABASE HOST
     try:
@@ -236,7 +236,7 @@ def get_params(filename):
     except KeyError as e:
         m = "The \"branches\" node not found in the JSON params file."
         log(m, LOG_ERROR)
-        raise ParamError(m).with_traceback(e)
+        raise ParamError(m, e)
 
     # BRANCHES NODES
     b_i = 0
@@ -261,7 +261,7 @@ def get_params(filename):
         except KeyError as e:
             m = "The \"name\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise ParamError(m).with_traceback(e)
+            raise ParamError(m, e)
 
         # BRANCHES NODE TEACHERS_PATTERNS
         try:
@@ -275,7 +275,7 @@ def get_params(filename):
         except KeyError as e:
             m = "The \"teachers_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise ParamError(m).with_traceback(e)
+            raise ParamError(m, e)
 
         # BRANCHES NODE GROUPS_PATTERNS
         try:
@@ -288,7 +288,7 @@ def get_params(filename):
         except KeyError as e:
             m = "The \"groups_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise ParamError(m).with_traceback(e)
+            raise ParamError(m, e)
 
         # BRANCHES NODE BLACKLIST
         try:
@@ -301,7 +301,7 @@ def get_params(filename):
         except KeyError as e:
             m = "The \"blacklist\" in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise ParamError(m).with_traceback(e)
+            raise ParamError(m, e)
 
         # BRANCHES NODE DELIMITER
         try:
@@ -338,7 +338,7 @@ def get_params(filename):
                 except KeyError as e:
                     m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
                     log(m, LOG_ERROR)
-                    raise ParamError(m).with_traceback(e)
+                    raise ParamError(m, e)
 
                 # BRANCHES NODE GROUP ADDRESSES
                 try:
@@ -358,13 +358,13 @@ def get_params(filename):
                 except KeyError as e:
                     m = "The \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
                     log(m, LOG_ERROR)
-                    raise ParamError(m).with_traceback(e)
+                    raise ParamError(m, e)
 
                 g_i += 1
         except KeyError as e:
             m = "The \"groups\" list in the node at position {} in \"branches\" was not found.".format(b_i)
             log(m, LOG_ERROR)
-            raise ParamError(m).with_traceback(e)
+            raise ParamError(m, e)
 
         b_i += 1
 
@@ -597,7 +597,7 @@ def update_database(event_list, collection):
             )
         except PyMongoError as e:
             m = "Error while updating collection {}".format(collection)
-            raise UpdateDatabaseError(m).with_traceback(e)
+            raise UpdateDatabaseError(m, e)
 
         if old_ev is not None:
             # put the modifications in the "old" array
@@ -624,7 +624,7 @@ def update_database(event_list, collection):
                     )
                 except PyMongoError as e:
                     m = "Error while pushing modifications in collection {}".format(collection)
-                    raise UpdateDatabaseError(m).with_traceback(e)
+                    raise UpdateDatabaseError(m, e)
             else:
                 unchanged += 1
         else:
@@ -660,12 +660,12 @@ def garbage_collect(start_collec, garbage_collec, last_update):
                 bulk_insert.insert(g)
             except PyMongoError as e:
                 m = "Error while inserting to collection {}".format(garbage_collec)
-                raise UpdateDatabaseError(m).with_traceback(e)
+                raise UpdateDatabaseError(m, e)
             try:
                 bulk_remove.find({"_id": g["_id"]}).remove_one()
             except PyMongoError as e:
                 m = "Error while removing from collection {}".format(start_collec)
-                raise UpdateDatabaseError(m).with_traceback(e)
+                raise UpdateDatabaseError(m, e)
 
         bulk_insert.execute()
         bulk_remove.execute()
@@ -730,7 +730,7 @@ def main(db, branches):
                             m = "{} Error requesting URI {}".format(log_prefix,
                                                                     address)
                             log(m, LOG_ERROR)
-                            raise DownloadError(m).with_traceback(e)
+                            raise DownloadError(m, e)
                         ics = ics_file.read()
 
                         try:
@@ -774,7 +774,7 @@ def main(db, branches):
         log(m, LOG_ERROR)
         raise e
     except DownloadError as e:
-        m = "Error while download the files"
+        m = "Error while downloading the files"
         log(m, LOG_ERROR)
         raise e
     except:
@@ -824,6 +824,8 @@ if __name__ == '__main__':
                         m = "Reached the maximum number of errors tolered in a row. The script will totally stop."
                         log(m, LOG_WARNING)
                         break
+                else:
+                    errors = 0
             except:
                 m = "A global error happened, that's bad ! The script is broken."
                 log(m, LOG_ERROR)
