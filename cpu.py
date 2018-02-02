@@ -79,7 +79,7 @@ def get_params(filename):
         "updater": les paramètres généraux de l'updater
         {
             "frequency": int (facultatif), la fréquence en secondes de lancement du script. Pas de récurrence du script si absent.
-            "error_tolerance": int, le nombre d'erreurs tolérées à la suite : si n updates ont été lancées à la suite et chacune se terminait par une erreur, le script s'arrête
+            "error_tolerance": int, le nombre d'erreurs tolérées à la suite : si n updates ont été lancées à la suite et chacune se terminait par une erreur, le script s'arrête. Échouer à télécharger un fichier ne compte pas comme une erreur mais ne réinitialise pas le compteur non plus
         }
         "database": les paramètres généraux de la base de données mongo
         {
@@ -816,6 +816,9 @@ if __name__ == '__main__':
                 s.enter(delay, 1, main, (db, params["branches"]))
                 try:
                     s.run(blocking=True)
+                except DownloadError as e:
+                    m = "Couldn't download a file. Something seems wrong, maybe better luck next time ?"
+                    log(m, LOG_WARNING)
                 except UpdaterError as e:
                     errors += 1
                     m = "An error happened in this updater instance ({}/{} in a row)".format(errors, params["updater"]["error_tolerance"])
