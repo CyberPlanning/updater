@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import argparse
+import datetime
 from icalendar import Calendar
 import urllib.request
 import sys
@@ -41,9 +42,17 @@ if __name__ == '__main__':
     vevents = cal.walk("VEVENT")
 
     count = len(vevents)
-    dates = [i["DTSTART"].dt for i in vevents]
+    dates = [i.decoded('DTSTART') for i in vevents if type(i.decoded('DTSTART')) != datetime.date]
+    
     minDate = min(*dates)
     maxDate = max(*dates)
+
+    # print('Dates:')
+    # for i in dates: print(i)
+
+    first = vevents[0]
+    keys = list(dict(first).keys())
+    print("Keys : %s" % keys)
 
     print("Calendar %s" % input_file)
     print("Events count %d" % count)
