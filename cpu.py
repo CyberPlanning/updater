@@ -832,17 +832,17 @@ def main(db, branches):
                     i += 1
                 k += 1
 
-            print(data_list)
+            # print(data_list)
 
-            # log("{} Updating new and modified events in {}".format(log_prefix, collec_name))
-            # new, updated, unchanged = update_database(data_list, db[collec_name])
-            # log("{} Update complete : {} newly created events, {} updated events, {} unchanged events".format(log_prefix, new, updated, unchanged))
-            # log("{} Collecting garbage events from {} and storing them in {}".format(log_prefix, collec_name, garbage_collec_name))
-            # collected = garbage_collect(db[collec_name], db[garbage_collec_name], update_time)
-            # log("{} Garbage collection complete : {} events collected".format(log_prefix, collected))
-            # log("{} There are {} events in {}".format(log_prefix, new + updated + unchanged, collec_name))
-            # log("{} There are {} events in {}".format(log_prefix, db[garbage_collec_name].count({}), garbage_collec_name))
-            # log("{} The updater ended successfully".format(log_prefix), LOG_INFO)
+            log("{} Updating new and modified events in {}".format(log_prefix, collec_name))
+            new, updated, unchanged = update_database(data_list, db[collec_name])
+            log("{} Update complete : {} newly created events, {} updated events, {} unchanged events".format(log_prefix, new, updated, unchanged))
+            log("{} Collecting garbage events from {} and storing them in {}".format(log_prefix, collec_name, garbage_collec_name))
+            collected = garbage_collect(db[collec_name], db[garbage_collec_name], update_time)
+            log("{} Garbage collection complete : {} events collected".format(log_prefix, collected))
+            log("{} There are {} events in {}".format(log_prefix, new + updated + unchanged, collec_name))
+            log("{} There are {} events in {}".format(log_prefix, db[garbage_collec_name].count({}), garbage_collec_name))
+            log("{} The updater ended successfully".format(log_prefix), LOG_INFO)
     except UpdateDatabaseError as e:
         m = "Error while updating the database"
         log(m, LOG_ERROR)
