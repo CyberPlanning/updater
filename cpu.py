@@ -34,6 +34,9 @@ DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 27017
 DEFAULT_DELIMITER = "\n"
 
+PARSER_MODE_ENT = "ENT"
+PARSER_MODE_NEXTCLOUD = "Nextcloud"
+
 
 def log(msg, lvl=LOG_INFO):
     """
@@ -161,7 +164,7 @@ def get_params(filename):
         if type(p["updater"]["frequency"]) is not int and p["updater"]["frequency"] is not None:
             m = "The \"frequency\" in the \"updater\" node is not an int or None."
             log(m, LOG_ERROR)
-            raise ParamError(m, e)
+            raise ParamError(m)
     except KeyError:
         m = "The \"frequency\" in the \"updater\" node was not found. Setting the default value {}.".format(DEFAULT_FREQUENCY)
         log(m, LOG_WARNING)
@@ -423,28 +426,17 @@ def format_data(calendar, planning_parser):
 
 class EventParser:
     """
-    A parser with a main method parse() used to get the attributes from an
-    event in the Calendar.
-
-    The get methods must be used after parsing.
+    The parent parser for specific parsers. Simply defines the methods init and
+    parse, and the attributes it needs to return after parsing.
     """
 
-    def __init__(self, blacklist, teachers_patterns, groups_patterns, description_delimiter, update_time):
+    def __init__(self, update_time):
         """
-        Instanciate the object with different parameters.
+        Creates the final attributes and applies default values for them before
+        parsing.
 
-        :param blacklist: the string patterns used to blacklist items not desired
-        :param teachers_patterns: the string patterns used to identify a teacher
-        :param groups_patterns: the string patterns used to identify a group
-        :param description_delimiter: the delimiter used to split the items in the calendar's description field
         :param update_time: the datetime of the current updating process, will be set as new values to last_update in every event
         """
-
-        self._blacklist = blacklist
-        self._teachers_patterns = teachers_patterns
-        self._groups_patterns = groups_patterns
-        self._delimiter = description_delimiter
-
         self._title = ""
         self._start_date = None
         self._end_date = None
@@ -454,6 +446,79 @@ class EventParser:
         self._undetermined_description_items = []
         self._event_id = ""
         self._update_time = update_time
+
+    def parse(self, vevent):
+        raise NotImplementedError("Method parse must be implemented !")
+
+    def get_title(self):
+        """Return the title string found in the event after parsing."""
+        return self._title
+
+    def get_start_date(self):
+        """Return the starting date found in the event after parsing."""
+        return self._start_date
+
+    def get_end_date(self):
+        """Return the ending date found in the event after parsing."""
+        return self._end_date
+
+    def get_classrooms(self):
+        """Return the list of the classrooms found in the event after parsing."""
+        return self._classrooms
+
+    def get_groups(self):
+        """Return the list of the groups found in the description field after parsing."""
+        return self._groups
+
+    def get_teachers(self):
+        """Return the list of the teachers found in the description field after parsing."""
+        return self._teachers
+
+    def get_undetermined_description_items(self):
+        """
+        Return the list of the undetermined items found in the description field after
+        parsing.
+        """
+        return self._undetermined_description_items
+
+    def get_event_id(self):
+        """
+        Return the event id string found in the uid field after parsing.
+        """
+        return self._event_id
+
+    def get_update_time(self):
+        """
+        Return the datetime of the current updating process.
+        """
+        return self._update_time
+
+
+class ENTEventParser(EventParser):
+    """
+    A parser with a main method parse() used to get the attributes from an
+    event in the Calendar.
+
+    The get methods must be used after parsing.
+    """
+
+    def __init__(self, blacklist, teachers_patterns, groups_patterns,
+                 description_delimiter, update_time):
+        """
+        Instanciate the object with different parameters.
+
+        :param blacklist: the string patterns used to blacklist items not desired
+        :param teachers_patterns: the string patterns used to identify a teacher
+        :param groups_patterns: the string patterns used to identify a group
+        :param description_delimiter: the delimiter used to split the items in the calendar's description field
+        :param update_time: the datetime of the current updating process, will be set as new values to last_update in every event
+        """
+        super().__init__(update_time)
+
+        self._blacklist = blacklist
+        self._teachers_patterns = teachers_patterns
+        self._groups_patterns = groups_patterns
+        self._delimiter = description_delimiter
 
     def parse(self, vevent):
         """Return None.
@@ -504,48 +569,48 @@ class EventParser:
                         self._undetermined_description_items.append(elem)
         self._event_id = str(vevent["UID"])
 
-    def get_title(self):
-        """Return the title string found in the event after parsing."""
-        return self._title
 
-    def get_start_date(self):
-        """Return the starting date found in the event after parsing."""
-        return self._start_date
-
-    def get_end_date(self):
-        """Return the ending date found in the event after parsing."""
-        return self._end_date
-
-    def get_classrooms(self):
-        """Return the list of the classrooms found in the event after parsing."""
-        return self._classrooms
-
-    def get_groups(self):
-        """Return the list of the groups found in the description field after parsing."""
-        return self._groups
-
-    def get_teachers(self):
-        """Return the list of the teachers found in the description field after parsing."""
-        return self._teachers
-
-    def get_undetermined_description_items(self):
+class NextcloudEventParser(EventParser):
+    """
+    A parser to integrate iCalendar format from Nextcloud planning.
+    """
+    def __init__(self, update_time):
         """
-        Return the list of the undetermined items found in the description field after
-        parsing.
-        """
-        return self._undetermined_description_items
+        See EventParser.
 
-    def get_event_id(self):
+        :param update_time: see EventParser
         """
-        Return the event id string found in the uid field after parsing.
-        """
-        return self._event_id
+        super().__init__(update_time)
 
-    def get_update_time(self):
+    def parse(self, vevent):
         """
-        Return the datetime of the current updating process.
+        Parses the events according to Nextcloud iCalendar format.
+
+        :param vevent: the vevent to parse from the iCalendar file
         """
-        return self._update_time
+        self._title = vevent["SUMMARY"]
+        self._start_date = vevent["DTSTART"]
+        self._end_date = vevent["DTEND"]
+        self._classrooms = vevent["LOCATION"]
+
+        # DESCRIPTION =
+        # parfois "Par {teacher}" peut-être aussi "De {teacher}"
+        # et éventuellement plusieurs "Par {teacher1}, {teacher2} et {teacher3}"
+        desc = vevent["DESCRIPTION"]
+        if desc.startswith("Par ") and len(desc) > 4:
+            desc = desc[4:]
+        t = desc.split(",")
+        for i in range(len(t) - 1):
+            self._teachers.append(t[i].strip())
+        t = t[-1].split(" et ")
+        for te in t:
+            self._teachers.append(te.strip())
+
+        self._teachers.append(vevent["DESCRIPTION"])
+
+        self._groups.append(vevent["CLASS"])
+        self._undetermined_description_items = []
+        self._event_id = str(vevent["UID"])
 
 
 def get_modifications(old, new, attributes):
@@ -706,9 +771,16 @@ def main(db, branches):
             collec_name = "planning_" + branch["name"]
             garbage_collec_name = "garbage_" + branch["name"]
             log_prefix = "[{}]".format(branch["name"])
-            log("{} Starting the update for the branch {}".format(log_prefix, branch["name"]))
+            log("{} Starting the update for the branch {} (mode {})".format(log_prefix, branch["name"], branch["parser"]["mode"]))
             data_list = []
-            parser = EventParser(branch["blacklist"], branch["teachers_patterns"], branch["groups_patterns"], branch["delimiter"], update_time)
+
+            parser = None
+            parser_params = branch["parser"]
+            if parser_params["mode"] == PARSER_MODE_ENT:
+                parser = ENTEventParser(parser_params["blacklist"], parser_params["teachers_patterns"], parser_params["groups_patterns"], parser_params["delimiter"], update_time)
+            elif parser_params["mode"] == PARSER_MODE_NEXTCLOUD:
+                parser = NextcloudEventParser(update_time)
+
             nb_groups = len(branch["groups"])
             k = 1
             for group in branch["groups"]:
@@ -760,15 +832,17 @@ def main(db, branches):
                     i += 1
                 k += 1
 
-            log("{} Updating new and modified events in {}".format(log_prefix, collec_name))
-            new, updated, unchanged = update_database(data_list, db[collec_name])
-            log("{} Update complete : {} newly created events, {} updated events, {} unchanged events".format(log_prefix, new, updated, unchanged))
-            log("{} Collecting garbage events from {} and storing them in {}".format(log_prefix, collec_name, garbage_collec_name))
-            collected = garbage_collect(db[collec_name], db[garbage_collec_name], update_time)
-            log("{} Garbage collection complete : {} events collected".format(log_prefix, collected))
-            log("{} There are {} events in {}".format(log_prefix, new + updated + unchanged, collec_name))
-            log("{} There are {} events in {}".format(log_prefix, db[garbage_collec_name].count({}), garbage_collec_name))
-            log("{} The updater ended successfully".format(log_prefix), LOG_INFO)
+            print(data_list)
+
+            # log("{} Updating new and modified events in {}".format(log_prefix, collec_name))
+            # new, updated, unchanged = update_database(data_list, db[collec_name])
+            # log("{} Update complete : {} newly created events, {} updated events, {} unchanged events".format(log_prefix, new, updated, unchanged))
+            # log("{} Collecting garbage events from {} and storing them in {}".format(log_prefix, collec_name, garbage_collec_name))
+            # collected = garbage_collect(db[collec_name], db[garbage_collec_name], update_time)
+            # log("{} Garbage collection complete : {} events collected".format(log_prefix, collected))
+            # log("{} There are {} events in {}".format(log_prefix, new + updated + unchanged, collec_name))
+            # log("{} There are {} events in {}".format(log_prefix, db[garbage_collec_name].count({}), garbage_collec_name))
+            # log("{} The updater ended successfully".format(log_prefix), LOG_INFO)
     except UpdateDatabaseError as e:
         m = "Error while updating the database"
         log(m, LOG_ERROR)

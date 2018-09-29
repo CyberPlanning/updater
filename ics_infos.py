@@ -7,6 +7,7 @@ from icalendar import Calendar
 import urllib.request
 import sys
 
+
 def parse_args():
     """Arguments parsing."""
     parser = argparse.ArgumentParser(description='Basic instruction parser')
