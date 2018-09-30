@@ -18,12 +18,16 @@ from urllib.error import URLError
 import datetime
 import re
 import sched
-from icalendar import Calendar
+from icalendar import Calendar, vDatetime
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 from pymongo.database import Database
 from sys import exc_info
 import json
+from jsonschema import validate, ValidationError, SchemaError
+
+PARAMS_FILENAME = "params.json"
+PARAMS_SCHEMA_FILENAME = "params.schema.json"
 
 LOG_INFO = 0
 LOG_WARNING = 1
@@ -35,7 +39,7 @@ DEFAULT_PORT = 27017
 DEFAULT_DELIMITER = "\n"
 
 PARSER_MODE_ENT = "ENT"
-PARSER_MODE_NEXTCLOUD = "Nextcloud"
+PARSER_MODE_HACK2G2 = "Hack2G2"
 
 
 def log(msg, lvl=LOG_INFO):
@@ -64,312 +68,85 @@ def log(msg, lvl=LOG_INFO):
     ))
 
 
-def get_params(filename):
+def get_params():
     """
     Create the object of the parameters used for the updater, in the file which
     path is given by filename.
-    Also, the method checks if everything is in order.
+    It also verifies using JSON Schema specs draft 4 (python implementation) if
+    the json is valid.
 
-    If an optional (facultatif) parameter isn't in the file, its default value
+    If an optional parameter isn't in the file, its default value
     is set. It's still advised to choose a value even if its the default.
     If a non-optional parameter isn't in the file, an error is raised.
-    To make things clear : a node is always necessary in the file, even if it's
-    only composed of optional elements.
 
-    The JSON file is described in French below.
+    Refer to the params JSON schema (whose filename is given in
+    PARAMS_SCHEMA_FILENAME) to build a valid params schema (whose filename is
+    given in PARAMS_FILENAME).
+    More info about JSON Schema : https://json-schema.org/
 
-    {
-        "updater": les paramètres généraux de l'updater
-        {
-            "frequency": int (facultatif), la fréquence en secondes de lancement du script. Pas de récurrence du script si absent.
-            "error_tolerance": int, le nombre d'erreurs tolérées à la suite : si n updates ont été lancées à la suite et chacune se terminait par une erreur, le script s'arrête. Échouer à télécharger un fichier ne compte pas comme une erreur mais ne réinitialise pas le compteur non plus
-        }
-        "database": les paramètres généraux de la base de données mongo
-        {
-            "name": string, le nom de la db du planning dans mongo.
-            "host": string (facultatif), le nom de l'hôte pour la base de données mongo. Par défaut "localhost".
-            "port": int (facultatif), le port de la base de données sur l'hôte mongo. Par défaut 27017.
-        }
-        "branches": les filières à suivre/mettre à jour, chacune ayant une collection dans la base de données du planning, donc les noms doivent être différents
-        [
-            {
-                "name": string, le nom attribué aux collections de la filière dans la base de données
-                "teachers_patterns": les expressions régulières permettant de détecter le nom d'un professeur dans la description complète du cours
-                [
-                    string
-                ]
-                "groups_patterns": les expressions régulières permettant de détecter le nom d'un groupe dans la description complète du cours
-                [
-                    string
-                ]
-                "blacklist": les expressions régulières permettant de ne pas inclure les expressions, séparées par le délimiteur, correspondantes de la description
-                [
-                    string (facultatif)
-                ]
-                "delimiter": string (facultatif), le délimiteur de chaque champ dans le fichier iCalendar. Par défaut "\n".
-                "groups": les groupes/classes de la filière, réparties par nom (dit affiliation)
-                [
-                    {
-                        "name": string, le nom du groupe auquel chaque cours sera rattaché dans la base de données (affiliation), unique pour un groupe
-                        "adresses": les URIs de téléchargement des fichiers iCalendar relatifs au cours
-                        [
-                            string
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
-
-    :param filename: the path of the JSON file containing the parameters
     :return: an object similar to the JSON pattern
     :raise errors.ParamError: when a parameter isn't present, isn't a correct type or isn't valid
     """
 
     # get the file JSON structure
-    p = None
     try:
-        with open(filename, 'r') as p_file:
+        with open(PARAMS_FILENAME, 'r') as p_file:
             p = json.load(p_file)
-    except SyntaxError as e:
-        m = "The path of the params file {} might not be valid.".format(filename)
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
-    except FileNotFoundError as e:
-        m = "The JSON params file {} was not found.".format(filename)
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
-    except json.decoder.JSONDecodeError as e:
-        m = "The JSON params file {} couldn't be decoded.".format(filename)
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
-    except OSError as e:
-        m = "Unknown error while using the JSON params file {}.".format(filename)
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
+    except SyntaxError as err:
+        msg = "The path of the params file {} might not be valid.".format(PARAMS_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
+    except FileNotFoundError as err:
+        msg = "The JSON params file {} was not found.".format(PARAMS_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
+    except json.decoder.JSONDecodeError as err:
+        msg = "The JSON params file {} couldn't be decoded.".format(PARAMS_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
+    except OSError as err:
+        msg = "Unknown system error while using the JSON params file {}.".format(PARAMS_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
 
-    # UPDATER
+    # get the JSON schema used for validation
     try:
-        if type(p["updater"]) is not dict:
-            m = "The \"updater\" node is not a dictionary in the JSON params file."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError as e:
-        m = "The \"updater\" node not found in the JSON params file."
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
+        with open(PARAMS_SCHEMA_FILENAME, 'r') as p_file:
+            p_schema = json.load(p_file)
+    except SyntaxError as err:
+        msg = "The path of the JSON Schema params file {} might not be valid.".format(PARAMS_SCHEMA_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
+    except FileNotFoundError as err:
+        msg = "The JSON Schema params file {} was not found.".format(PARAMS_SCHEMA_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
+    except json.decoder.JSONDecodeError as err:
+        msg = "The JSON Schema params file {} coudln't be decoded.".format(PARAMS_SCHEMA_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
+    except OSError as err:
+        msg = "Unknow system error while using the JSON params file {}.".format(PARAMS_SCHEMA_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
 
-    # UPDATER FREQUENCY
+    # validate the parameters
     try:
-        if type(p["updater"]["frequency"]) is not int and p["updater"]["frequency"] is not None:
-            m = "The \"frequency\" in the \"updater\" node is not an int or None."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError:
-        m = "The \"frequency\" in the \"updater\" node was not found. Setting the default value {}.".format(DEFAULT_FREQUENCY)
-        log(m, LOG_WARNING)
-        p["updater"]["frequency"] = DEFAULT_FREQUENCY
+        validate(p, p_schema)
+    except ValidationError as err:
+        msg = "The parameters ({}) aren't valid according to the schema ({}).".format(PARAMS_FILENAME, PARAMS_SCHEMA_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
+    except SchemaError as err:
+        msg = "The parameters schema {} itself is invalid.".format(PARAMS_SCHEMA_FILENAME)
+        log(msg, LOG_ERROR)
+        raise ParamError(msg, err)
 
-    # UPDATER ERROR_TOLERANCE
-    try:
-        if type(p["updater"]["error_tolerance"]) is not int:
-            m = "The \"error_tolerance\" in the \"updater\" node is not an int."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-        if p["updater"]["error_tolerance"] < 0:
-            m = "The \"error_tolerance\" in the \"updater\" node is not positive or zero."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError as e:
-        m = "The\"error_tolerance\" in the \"updater\" node was not found."
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
+    # we do not check the branch mode requirements...
+    # maybe a restructuration is necessary ?
 
-    # DATABASE
-    try:
-        if type(p["database"]) is not dict:
-            m = "The \"database\" node is not a dictionary in the JSON params file."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError as e:
-        m = "The \"database\" node not found in the JSON params file."
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
-
-    # DATABASE NAME
-    try:
-        if type(p["database"]["name"]) is not str:
-            m = "The \"name\" in the \"database\" node is not a str."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError as e:
-        m = "The \"name\" in the \"database\" node was not found."
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
-
-    # DATABASE HOST
-    try:
-        if type(p["database"]["host"]) is not str:
-            m = "The \"host\" in the \"database\" node is not a str."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError:
-        m = "The \"host\" in the \"database\" node was not found. Setting the default value {}.".format(DEFAULT_HOST)
-        log(m, LOG_WARNING)
-        p["database"]["host"] = DEFAULT_HOST
-
-    # DATABASE PORT
-    try:
-        if type(p["database"]["port"]) is not int:
-            m = "The \"port\" in the \"database\" node is not an int."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError:
-        m = "The \"port\" in the \"database\" node was not found. Setting the default value {}.".format(
-            DEFAULT_HOST)
-        log(m, LOG_WARNING)
-        p["database"]["port"] = DEFAULT_HOST
-
-    # BRANCHES
-    try:
-        if type(p["branches"]) is not list:
-            m = "The \"branches\" node is not a dictionary in the JSON params file."
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-    except KeyError as e:
-        m = "The \"branches\" node not found in the JSON params file."
-        log(m, LOG_ERROR)
-        raise ParamError(m, e)
-
-    # BRANCHES NODES
-    b_i = 0
-    branch_names = []
-    for b in p["branches"]:
-        if type(b) is not dict:
-            m = "The node at position {} in \"branches\" is not a dict.".format(b_i)
-            log(m, LOG_ERROR)
-            raise ParamError(m)
-
-        # BRANCHES NODE NAME
-        try:
-            if type(b["name"]) is not str:
-                m = "The \"name\" in the node at position {} in \"branches\" is not a str.".format(b_i)
-                log(m, LOG_ERROR)
-                raise ParamError(m)
-            elif b["name"] in branch_names:
-                m = "The \"name\" in the node at position {} in \"branches\" already exists !".format(b_i)
-                log(m, LOG_ERROR)
-                raise ParamError(m)
-            branch_names.append(b["name"])
-        except KeyError as e:
-            m = "The \"name\" in the node at position {} in \"branches\" was not found.".format(b_i)
-            log(m, LOG_ERROR)
-            raise ParamError(m, e)
-
-        # BRANCHES NODE TEACHERS_PATTERNS
-        try:
-            p_i = 0
-            for pattern in b["teachers_patterns"]:
-                if type(pattern) is not str:
-                    m = "The element at position {} in \"teachers_patterns\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
-                    log(m, LOG_ERROR)
-                    raise ParamError(m)
-                p_i += 1
-        except KeyError as e:
-            m = "The \"teachers_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
-            log(m, LOG_ERROR)
-            raise ParamError(m, e)
-
-        # BRANCHES NODE GROUPS_PATTERNS
-        try:
-            p_i = 0
-            for pattern in b["groups_patterns"]:
-                if type(pattern) is not str:
-                    m = "The element at position {} in \"groups_patterns\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
-                    log(m, LOG_ERROR)
-                    raise ParamError(m)
-        except KeyError as e:
-            m = "The \"groups_patterns\" in the node at position {} in \"branches\" was not found.".format(b_i)
-            log(m, LOG_ERROR)
-            raise ParamError(m, e)
-
-        # BRANCHES NODE BLACKLIST
-        try:
-            p_i = 0
-            for blacklisted in b["blacklist"]:
-                if type(blacklisted) is not str:
-                    m = "The element at position {} in \"blacklist\" in the node at position {} in \"branches\" is not a str.".format(p_i, b_i)
-                    log(m, LOG_ERROR)
-                    raise ParamError(m)
-        except KeyError as e:
-            m = "The \"blacklist\" in the node at position {} in \"branches\" was not found.".format(b_i)
-            log(m, LOG_ERROR)
-            raise ParamError(m, e)
-
-        # BRANCHES NODE DELIMITER
-        try:
-            if type(b["delimiter"]) is not str:
-                m = "The \"delimiter\" in the node at position {} in \"branches\" is not str.".format(b_i)
-                log(m, LOG_ERROR)
-                raise ParamError(m)
-        except KeyError as e:
-            m = "The \"delimiter\" in the node at position {} in \"branches\" was not found. Setting the default value {}.".format(b_i, DEFAULT_DELIMITER)
-            log(m, LOG_WARNING)
-            b["delimiter"] = DEFAULT_DELIMITER
-
-        # BRANCHES NODE GROUPS
-        try:
-            g_i = 0
-            g_names = []
-            for g in b["groups"]:
-                if type(g) is not dict:
-                    m = "The node at position {} in \"groups\" in the node at position {} in \"branches\" is not a dict.".format(g_i, b_i)
-                    log(m, LOG_ERROR)
-                    raise ParamError(m)
-
-                # BRANCHES NODE GROUP NAME
-                try:
-                    if type(g["name"]) is not str:
-                        m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a str".format(g_i, b_i)
-                        log(m, LOG_ERROR)
-                        raise ParamError(m)
-                    if g["name"] in g_names:
-                        m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" already exists !".format(g_i, b_i)
-                        log(m, LOG_ERROR)
-                        raise ParamError(m)
-                    g_names.append(g["name"])
-                except KeyError as e:
-                    m = "The \"name\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
-                    log(m, LOG_ERROR)
-                    raise ParamError(m, e)
-
-                # BRANCHES NODE GROUP ADDRESSES
-                try:
-                    if type(g["addresses"]) is not list:
-                        m = "The \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a list.".format(g_i, b_i)
-                        log(m, LOG_ERROR)
-                        raise ParamError(m)
-                    for a in g["addresses"]:
-                        if type(a) is not str:
-                            m = "An element in \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" is not a str.".format(g_i, b_i)
-                            log(m, LOG_ERROR)
-                            raise ParamError(m)
-                        if not re.match("http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+", a):
-                            m = "An element in \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" does not match the URI regex.".format(g_i, b_i)
-                            log(m, LOG_ERROR)
-                            raise ParamError(m)
-                except KeyError as e:
-                    m = "The \"addresses\" in the node at position {} in \"groups\" in the node at position {} in \"branches\" was not found.".format(g_i, b_i)
-                    log(m, LOG_ERROR)
-                    raise ParamError(m, e)
-
-                g_i += 1
-        except KeyError as e:
-            m = "The \"groups\" list in the node at position {} in \"branches\" was not found.".format(b_i)
-            log(m, LOG_ERROR)
-            raise ParamError(m, e)
-
-        b_i += 1
+    msg = "{} valid according to the schema {}".format(PARAMS_FILENAME, PARAMS_SCHEMA_FILENAME)
+    log(msg, LOG_INFO)
 
     return p
 
@@ -446,6 +223,16 @@ class EventParser:
         self._undetermined_description_items = []
         self._event_id = ""
         self._update_time = update_time
+
+    def default_values(self):
+        self._title = ""
+        self._start_date = None
+        self._end_date = None
+        self._classrooms = ""
+        self._teachers = []
+        self._groups = []
+        self._undetermined_description_items = []
+        self._event_id = ""
 
     def parse(self, vevent):
         raise NotImplementedError("Method parse must be implemented !")
@@ -537,7 +324,8 @@ class ENTEventParser(EventParser):
         """
 
         self._title = str(vevent["SUMMARY"])
-        self._start_date = vevent["DTSTART"].dt.replace(tzinfo=None)  # tzinfo=None to remove the UTC timezone, which is useless and source of conflict with PyMongo
+        self._start_date = vevent["DTSTART"].dt.replace(
+            tzinfo=None)  # tzinfo=None to remove the UTC timezone, which is useless and source of conflict with PyMongo
         self._end_date = vevent["DTEND"].dt.replace(tzinfo=None)
         self._classrooms = []
         for elem in vevent["LOCATION"].split(self._delimiter):
@@ -570,7 +358,7 @@ class ENTEventParser(EventParser):
         self._event_id = str(vevent["UID"])
 
 
-class NextcloudEventParser(EventParser):
+class Hack2G2EventParser(EventParser):
     """
     A parser to integrate iCalendar format from Nextcloud planning.
     """
@@ -588,28 +376,57 @@ class NextcloudEventParser(EventParser):
 
         :param vevent: the vevent to parse from the iCalendar file
         """
-        self._title = vevent["SUMMARY"]
-        self._start_date = vevent["DTSTART"]
-        self._end_date = vevent["DTEND"]
-        self._classrooms = vevent["LOCATION"]
+        self.default_values()
+        try:
+            self._title = str(vevent["SUMMARY"])
+        except KeyError:
+            pass
+
+        try:
+            dt = vevent["DTSTART"].dt
+            if type(dt) is datetime.datetime:
+                # removing info on timezone and adjust on UTC
+                self._start_date = (dt - dt.utcoffset()).replace(tzinfo=None)
+            elif type(dt) is datetime.date:
+                self._start_date = dt
+        except KeyError:
+            pass
+
+        try:
+            dt = vevent["DTEND"].dt
+            if type(dt) is datetime.datetime:
+                self._end_date = (dt - dt.utcoffset()).replace(tzinfo=None)
+            elif type(dt) is datetime.date:
+                self._end_date = dt
+        except KeyError:
+            pass
+
+        try:
+            self._classrooms = str(vevent["LOCATION"])
+        except KeyError:
+            pass
 
         # DESCRIPTION =
         # parfois "Par {teacher}" peut-être aussi "De {teacher}"
         # et éventuellement plusieurs "Par {teacher1}, {teacher2} et {teacher3}"
-        desc = vevent["DESCRIPTION"]
-        if desc.startswith("Par ") and len(desc) > 4:
-            desc = desc[4:]
-        t = desc.split(",")
-        for i in range(len(t) - 1):
-            self._teachers.append(t[i].strip())
-        t = t[-1].split(" et ")
-        for te in t:
-            self._teachers.append(te.strip())
+        try:
+            desc = vevent["DESCRIPTION"]
+            if (desc.startswith("Par ") or desc.startswith("par ")) and len(desc) > 4:
+                desc = desc[4:]
+            t = desc.split(",")
+            for i in range(len(t) - 1):
+                self._teachers.append(t[i].strip())
+            t = t[-1].split(" et ")
+            for te in t:
+                self._teachers.append(te.strip())
+        except KeyError:
+            pass
 
-        self._teachers.append(vevent["DESCRIPTION"])
+        try:
+            self._groups.append(str(vevent["CLASS"]))
+        except KeyError:
+            pass
 
-        self._groups.append(vevent["CLASS"])
-        self._undetermined_description_items = []
         self._event_id = str(vevent["UID"])
 
 
@@ -660,9 +477,9 @@ def update_database(event_list, collection):
                 },
                 upsert=True
             )
-        except PyMongoError as e:
-            m = "Error while updating collection {}".format(collection)
-            raise UpdateDatabaseError(m, e)
+        except PyMongoError as err:
+            msg = "Error while updating collection {}".format(collection)
+            raise UpdateDatabaseError(msg, err)
 
         if old_ev is not None:
             # put the modifications in the "old" array
@@ -687,9 +504,10 @@ def update_database(event_list, collection):
                             }
                         }
                     )
-                except PyMongoError as e:
-                    m = "Error while pushing modifications in collection {}".format(collection)
-                    raise UpdateDatabaseError(m, e)
+                except PyMongoError as err:
+                    msg = "Error while pushing modifications in collection {}".format(
+                        collection)
+                    raise UpdateDatabaseError(msg, err)
             else:
                 unchanged += 1
         else:
@@ -723,14 +541,16 @@ def garbage_collect(start_collec, garbage_collec, last_update):
             collected += 1
             try:
                 bulk_insert.insert(g)
-            except PyMongoError as e:
-                m = "Error while inserting to collection {}".format(garbage_collec)
-                raise UpdateDatabaseError(m, e)
+            except PyMongoError as err:
+                msg = "Error while inserting to collection {}".format(
+                    garbage_collec)
+                raise UpdateDatabaseError(msg, err)
             try:
                 bulk_remove.find({"_id": g["_id"]}).remove_one()
-            except PyMongoError as e:
-                m = "Error while removing from collection {}".format(start_collec)
-                raise UpdateDatabaseError(m, e)
+            except PyMongoError as err:
+                msg = "Error while removing from collection {}".format(
+                    start_collec)
+                raise UpdateDatabaseError(msg, err)
 
         bulk_insert.execute()
         bulk_remove.execute()
@@ -738,7 +558,7 @@ def garbage_collect(start_collec, garbage_collec, last_update):
     return collected
 
 
-def main(db, branches):
+def main(database, branches):
     """
     Make the update for every group in every branch :
     - Download the group iCalendars files from the URIs
@@ -748,7 +568,7 @@ def main(db, branches):
     The branches parameter comes from the get_params function and must match
     the pattern.
 
-    :param db: the database from the MongoClient object to update
+    :param database: the database from the MongoClient object to update
     :param branches: list, the branches with information to make the update
     :return: None
     :raise TypeError: if db is not a Database
@@ -756,14 +576,14 @@ def main(db, branches):
     :raise DownloadError: when the download isn't valid (5 attempts by default are set)
     :raise UpdateDatabaseError: when a database update goes wrong
     """
-    if type(db) is not Database:
-        m = "The PyMongo database given was not recognized."
-        log(m, LOG_ERROR)
-        raise TypeError(m)
+    if type(database) is not Database:
+        msg = "The PyMongo database given was not recognized."
+        log(msg, LOG_ERROR)
+        raise TypeError(msg)
     if type(branches) is not list:
-        m = "The parameter branches is not a list type. Does it really come from the get_params function ?"
-        log(m, LOG_ERROR)
-        raise TypeError(m)
+        msg = "The parameter branches is not a list type. Does it really come from the get_params function ?"
+        log(msg, LOG_ERROR)
+        raise TypeError(msg)
 
     try:
         update_time = datetime.datetime.now()
@@ -778,61 +598,66 @@ def main(db, branches):
             parser_params = branch["parser"]
             if parser_params["mode"] == PARSER_MODE_ENT:
                 parser = ENTEventParser(parser_params["blacklist"], parser_params["teachers_patterns"], parser_params["groups_patterns"], parser_params["delimiter"], update_time)
-            elif parser_params["mode"] == PARSER_MODE_NEXTCLOUD:
-                parser = NextcloudEventParser(update_time)
+            elif parser_params["mode"] == PARSER_MODE_HACK2G2:
+                parser = Hack2G2EventParser(update_time)
 
-            nb_groups = len(branch["groups"])
-            k = 1
-            for group in branch["groups"]:
-                log_prefix_group = "[{}/{}]".format(k, nb_groups)
-                i = 1
-                nb_addresses = len(group["addresses"])
-                for address in group["addresses"]:
-                    log_prefix_address = "[{}/{}]".format(i, nb_addresses)
-                    cal = None
-                    attempts = 0
-                    max_attempts = 5
-                    while attempts < max_attempts:
-                        log("{} {} {} Downloading address in group {}".format(
-                            log_prefix, log_prefix_group, log_prefix_address,
-                            group["name"]))
-                        try:
-                            ics_file = urllib.request.urlopen(address)
-                        except URLError as e:
-                            m = "{} Error requesting URI {}".format(log_prefix,
-                                                                    address)
-                            log(m, LOG_ERROR)
-                            raise DownloadError(m, e)
-                        ics = ics_file.read()
+            if parser is not None:
+                nb_groups = len(branch["groups"])
+                k = 1
+                for group in branch["groups"]:
+                    log_prefix_group = "[{}/{}]".format(k, nb_groups)
+                    i = 1
+                    nb_addresses = len(group["addresses"])
+                    for address in group["addresses"]:
+                        log_prefix_address = "[{}/{}]".format(i, nb_addresses)
+                        cal = None
+                        attempts = 0
+                        max_attempts = 5
+                        while attempts < max_attempts:
+                            log(
+                                "{} {} {} Downloading address in group {}".format(
+                                    log_prefix, log_prefix_group,
+                                    log_prefix_address,
+                                    group["name"]))
+                            try:
+                                ics_file = urllib.request.urlopen(address)
+                            except URLError as err:
+                                msg = "{} Error requesting URI {}".format(
+                                    log_prefix,
+                                    address)
+                                log(msg, LOG_ERROR)
+                                raise DownloadError(msg, err)
+                            ics = ics_file.read()
 
-                        try:
-                            cal = Calendar.from_ical(ics)
-                            break
-                        except ValueError as e:
-                            attempts += 1
-                            m = "{} Failed to download a calendar file ({}/{})".format(log_prefix, attempts, max_attempts)
-                            log(m, LOG_WARNING)
-                    if attempts == max_attempts:
-                        m = "{} Failed to download from the URI {}".format(log_prefix, address)
-                        log(m, LOG_ERROR)
-                        raise DownloadError(m)
-
-                    log("{} {} {} Removing duplicate events".format(log_prefix, log_prefix_group, log_prefix_address))
-                    for item in format_data(cal, parser):
-                        found = False
-                        for data in data_list:
-                            if item["event_id"] == data["event_id"]:
-                                # adds the current group to the affiliations
-                                data["affiliation"].append(group["name"])
-                                found = True
+                            try:
+                                cal = Calendar.from_ical(ics)
                                 break
-                        if found is False:
-                            item["affiliation"] = [group["name"]]
-                            data_list.append(item)
-                    i += 1
-                k += 1
+                            except ValueError:
+                                attempts += 1
+                                msg = "{} Failed to download a calendar file ({}/{})".format(
+                                    log_prefix, attempts, max_attempts)
+                                log(msg, LOG_WARNING)
+                        if attempts == max_attempts:
+                            msg = "{} Failed to download from the URI {}".format(
+                                log_prefix, address)
+                            log(msg, LOG_ERROR)
+                            raise DownloadError(msg)
 
-            # print(data_list)
+                        log("{} {} {} Removing duplicate events".format(
+                            log_prefix, log_prefix_group, log_prefix_address))
+                        for item in format_data(cal, parser):
+                            found = False
+                            for data in data_list:
+                                if item["event_id"] == data["event_id"]:
+                                    # adds the current group to the affiliations
+                                    data["affiliation"].append(group["name"])
+                                    found = True
+                                    break
+                            if found is False:
+                                item["affiliation"] = [group["name"]]
+                                data_list.append(item)
+                        i += 1
+                    k += 1
 
             log("{} Updating new and modified events in {}".format(log_prefix, collec_name))
             new, updated, unchanged = update_database(data_list, db[collec_name])
@@ -843,36 +668,38 @@ def main(db, branches):
             log("{} There are {} events in {}".format(log_prefix, new + updated + unchanged, collec_name))
             log("{} There are {} events in {}".format(log_prefix, db[garbage_collec_name].count({}), garbage_collec_name))
             log("{} The updater ended successfully".format(log_prefix), LOG_INFO)
-    except UpdateDatabaseError as e:
-        m = "Error while updating the database"
-        log(m, LOG_ERROR)
-        raise e
-    except DownloadError as e:
-        m = "Error while downloading the files"
-        log(m, LOG_ERROR)
-        raise e
+    except UpdateDatabaseError as err:
+        msg = "Error while updating the database"
+        log(msg, LOG_ERROR)
+        raise err
+    except DownloadError as err:
+        msg = "Error while downloading the files"
+        log(msg, LOG_ERROR)
+        raise err
     except:
-        m = "An unexpected error occured in the updating process"
-        log(m, LOG_ERROR)
+        msg = "An unexpected error occured in the updating process"
+        log(msg, LOG_ERROR)
         raise exc_info()[1]
 
 
 if __name__ == '__main__':
-    PARAMS_FILENAME = "params.json"
-
     log("Starting to parse the {} file".format(PARAMS_FILENAME))
     try:
-        params = get_params(PARAMS_FILENAME)
+        params = get_params()
     except ParamError as e:
         m = "An error occured, please check the parameters before launching the script again"
         log(m, LOG_ERROR)
         raise e
     log("The parameters were successfully set.")
-    log("The updater frequency parameter is set to {} seconds.".format(params["updater"]["frequency"]))
-    log("The database host parameter is set to {}.".format(params["database"]["host"]))
-    log("The database port parameter is set to {}.".format(params["database"]["port"]))
+    log("The updater frequency parameter is set to {} seconds.".format(
+        params["updater"]["frequency"]))
+    log("The database host parameter is set to {}.".format(
+        params["database"]["host"]))
+    log("The database port parameter is set to {}.".format(
+        params["database"]["port"]))
 
-    client = MongoClient(params["database"]["host"], params["database"]["port"])
+    client = MongoClient(params["database"]["host"],
+                         params["database"]["port"])
 
     db_name = params["database"]["name"]
     db = client[db_name]
@@ -885,7 +712,8 @@ if __name__ == '__main__':
         while True:
             try:
                 # the schedule delay starts only when the branch updates are finished
-                log("Scheduling the next update (in {} seconds)...".format(delay))
+                log("Scheduling the next update (in {} seconds)...".format(
+                    delay))
                 s = sched.scheduler()
                 s.enter(delay, 1, main, (db, params["branches"]))
                 try:
@@ -895,7 +723,8 @@ if __name__ == '__main__':
                     log(m, LOG_WARNING)
                 except UpdaterError as e:
                     errors += 1
-                    m = "An error happened in this updater instance ({}/{} in a row)".format(errors, params["updater"]["error_tolerance"])
+                    m = "An error happened in this updater instance ({}/{} in a row)".format(
+                        errors, params["updater"]["error_tolerance"])
                     log(m, LOG_WARNING)
                     if errors == params["updater"]["error_tolerance"]:
                         m = "Reached the maximum number of errors tolered in a row. The script will totally stop."

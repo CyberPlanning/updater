@@ -1,3 +1,4 @@
+jsonschema==2.6.0
 icalendar==4.0.0
 pymongo==3.6.0
 python-dateutil==2.6.1
