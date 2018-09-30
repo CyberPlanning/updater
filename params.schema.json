@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "title": "CPU parameters",
+  "description": "Parameters for CyberPlanning Updater processing",
+  "readOnly": true,
+  "type": "object",
+  "properties": {
+    "updater": {
+      "description": "Parameters for the updater instance",
+      "type": "object",
+      "properties": {
+        "frequency": {
+          "description": "Time in seconds to wait between every update, no repeat if frequency not set",
+          "type": "integer",
+          "minimum": 0,
+          "exclusiveMinimum": true
+        },
+        "error_tolerance": {
+          "description": "Number of update crashing with a critical error before shutting down the repeats",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["error_tolerance"],
+      "additionalProperties": false
+    },
+    "database": {
+      "description": "Parameters concerning the Mongo database to update",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name of the database in MongoDB",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-zA-Z0-9]*$"
+        },
+        "host": {
+          "description": "The MongoDB instance hostname, 'localhost' if not set",
+          "type": "string",
+          "pattern": "^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\\-]*[A-Za-z0-9])$"
+        },
+        "port": {
+          "description": "The MongoDB instance port, '27017' if not set",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "branches": {
+      "description": "The different branches to get updated in the database",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The unique branch name, identifying the collections in the MongoDB database",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 46,
+            "pattern": "^[a-zA-Z0-9]*$"
+          },
+          "parser": {
+            "description": "Parameters used to parse the VEVENTS of the branch iCalendar files",
+            "type": "object",
+            "properties": {
+              "mode": {
+                "description": "The parsing mode, different from provider to another",
+                "type": "string",
+                "enum": ["ENT", "Nextcloud"]
+              },
+              "teachers_patterns": {
+                "description": "In ENT mode, regex to identify the teachers in the DESCRIPTION field",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "groups_patterns": {
+                "description": "In ENT mode, regex to identify the groups in the DESCRIPTION field",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "blacklist": {
+                "description": "In ENT mode, regex to identify trash items in the DESCRIPTION field",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true
+              },
+              "delimiter": {
+                "description": "In ENT mode, the delimiter to separate values in the DESCRIPTION field",
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["mode"],
+            "additionalProperties": false
+          },
+          "groups": {
+            "description": "Subgroups of the branch (as different classes in a school for instance)",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "The group name, preferred to be short as it will appear duplicated in the database",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 10
+                },
+                "addresses": {
+                  "description": "URIs to download the iCalendar files",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "\\w+:(\\/?\\/?)[^\\s]+"
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                }
+              },
+              "required": ["name", "addresses"],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": ["name", "parser", "groups"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  },
+  "required": ["updater", "database", "branches"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "#TODO": ""
+    }
+  ]
+}
