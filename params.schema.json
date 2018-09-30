@@ -70,7 +70,7 @@
               "mode": {
                 "description": "The parsing mode, different from provider to another",
                 "type": "string",
-                "enum": ["ENT", "Nextcloud"]
+                "enum": ["ENT", "Hack2G2"]
               },
               "teachers_patterns": {
                 "description": "In ENT mode, regex to identify the teachers in the DESCRIPTION field",
