@@ -388,7 +388,7 @@ class Hack2G2EventParser(EventParser):
                 # removing info on timezone and adjust on UTC
                 self._start_date = (dt - dt.utcoffset()).replace(tzinfo=None)
             elif type(dt) is datetime.date:
-                self._start_date = dt
+                self._start_date = datetime.datetime(dt.year, dt.month, dt.day, 0, 0, 0)
         except KeyError:
             pass
 
@@ -397,7 +397,7 @@ class Hack2G2EventParser(EventParser):
             if type(dt) is datetime.datetime:
                 self._end_date = (dt - dt.utcoffset()).replace(tzinfo=None)
             elif type(dt) is datetime.date:
-                self._end_date = dt
+                self._end_date = datetime.datetime(dt.year, dt.month, dt.day, 0, 0, 0)
         except KeyError:
             pass
 
@@ -411,14 +411,20 @@ class Hack2G2EventParser(EventParser):
         # et éventuellement plusieurs "Par {teacher1}, {teacher2} et {teacher3}"
         try:
             desc = vevent["DESCRIPTION"]
-            if (desc.startswith("Par ") or desc.startswith("par ")) and len(desc) > 4:
-                desc = desc[4:]
-            t = desc.split(",")
-            for i in range(len(t) - 1):
-                self._teachers.append(t[i].strip())
-            t = t[-1].split(" et ")
-            for te in t:
-                self._teachers.append(te.strip())
+            teachers_pattern = re.compile('([pP]ar|[dD]e|PAR|DE)[a-zA-Z0-9 \(\)\.-]+((,| et )[a-zA-Z0-9 \(\)\.-]+)*')
+            matcher = re.match(teachers_pattern, desc)
+            if matcher is not None:
+                match = matcher.group()
+                if (match.lower().startswith("par ")) and len(desc) > 4:
+                    match = match[4:]
+                elif match.lower().startswith("de ") and len(desc) > 3:
+                    match = match[3:]
+                t = match.split(",")
+                for i in range(len(t) - 1):
+                    self._teachers.append(t[i].strip())
+                t = t[-1].split(" et ")
+                for te in t:
+                    self._teachers.append(te.strip())
         except KeyError:
             pass
 
