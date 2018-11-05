@@ -217,7 +217,7 @@ class EventParser:
         self._title = ""
         self._start_date = None
         self._end_date = None
-        self._classrooms = ""
+        self._classrooms = []
         self._teachers = []
         self._groups = []
         self._undetermined_description_items = []
@@ -228,7 +228,7 @@ class EventParser:
         self._title = ""
         self._start_date = None
         self._end_date = None
-        self._classrooms = ""
+        self._classrooms = []
         self._teachers = []
         self._groups = []
         self._undetermined_description_items = []
@@ -402,7 +402,7 @@ class Hack2G2EventParser(EventParser):
             pass
 
         try:
-            self._classrooms = str(vevent["LOCATION"])
+            self._classrooms.append(str(vevent["LOCATION"]))
         except KeyError:
             pass
 
