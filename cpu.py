@@ -526,6 +526,7 @@ def garbage_collect(start_collec, garbage_collec, last_update):
     """
     Remove the events from the start_collec collection which do not have the
     same last_update as the current one.
+    Previous events aren't taken into account.
     The removed events are put in the garbage_collec collection for log
     purposes.
 
@@ -537,7 +538,10 @@ def garbage_collect(start_collec, garbage_collec, last_update):
     """
     collected = 0
 
-    garbage = start_collec.find({"last_update": {"$lt": last_update}})
+    garbage = start_collec.find({
+        "last_update": {"$lt": last_update},
+        "end_date": {"$gte": datetime.datetime.now()}
+    })
     if garbage.count() != 0:
         # Bulk operations can take a lot of memory, stay aware of this and, if something happen, see here https://stackoverflow.com/questions/27039083/mongodb-move-documents-from-one-collection-to-another-collection
         bulk_remove = start_collec.initialize_unordered_bulk_op()
