@@ -12,10 +12,9 @@ Although Cyberplanning was first designed as a planning for students at first, t
 
 CPU has different states according to its configuration (see dedicated part below).
 
-![Alt text](./docs/img/cpu-states.svg)
-<img src="./docs/img/cpu-states.svg">
+<img src="./docs/img/cpu-states.svg" alt="./docs/img/cpu-states.svg">
 
-[Mermaid View](https://mermaidjs.github.io/mermaid-live-editor/#/view/eyJjb2RlIjoic3RhdGVEaWFncmFtXG5bKl0gLS0-IEJyYW5jaFxuc3RhdGUgQnJhbmNoIHtcblsqXSAtLT4gRG93bmxvYWRpbmdcbkRvd25sb2FkaW5nIC0tPiBEb3dubG9hZGluZyA6IEZhaWx1cmVcbkRvd25sb2FkaW5nIC0tPiBbKl0gOiBUb28gbWFueSBmYWlsdXJlc1xuRG93bmxvYWRpbmcgLS0-IFBhcnNpbmcgOiBTdWNjZXNzXG5QYXJzaW5nIC0tPiBVcGRhdGluZ1xuVXBkYXRpbmcgLS0-IFsqXVxufVxuQnJhbmNoIC0tPiBCcmFuY2g6IE5leHQgYnJhbmNoXG5CcmFuY2ggLS0-IElkbGU6IE5vIG1vcmUgYnJhbmNoXG5JZGxlIC0tPiBCcmFuY2g6IERlbGF5IiwibWVybWFpZCI6eyJ0aGVtZSI6ImRlZmF1bHQifX0)
+[Mermaid View](https://mermaidjs.github.io/mermaid-live-editor/#/view/eyJjb2RlIjoic3RhdGVEaWFncmFtXG5zdGF0ZSBVcGRhdGUge1xuc3RhdGUgQnJhbmNoIHtcblsqXSAtLT4gRG93bmxvYWRpbmdcbkRvd25sb2FkaW5nIC0tPiBEb3dubG9hZGluZyA6IEZhaWx1cmVcbkRvd25sb2FkaW5nIC0tPiBbKl0gOiBUb28gbWFueSBmYWlsdXJlc1xuRG93bmxvYWRpbmcgLS0-IFBhcnNpbmcgOiBTdWNjZXNzXG5QYXJzaW5nIC0tPiBVcGRhdGluZ1xuVXBkYXRpbmcgLS0-IFsqXVxufVxuWypdIC0tPiBCcmFuY2hcbkJyYW5jaCAtLT4gQnJhbmNoOiBOZXh0IGJyYW5jaFxuQnJhbmNoIC0tPiBbKl0gOiBObyBtb3JlIGJyYW5jaFxufVxuWypdIC0tPiBVcGRhdGVcblVwZGF0ZSAtLT4gSWRsZVxuSWRsZSAtLT4gVXBkYXRlOiBEZWxheSIsIm1lcm1haWQiOnsidGhlbWUiOiJkZWZhdWx0In19)
 
 - **Downloading**: downloads the given URLs for every groups in the current branch. After a certain amount of failed attempts, it hibernates in idle mode. In case of success, it goes through parsing.
 - **Parsing**: parses the iCal previously downloaded. It has custom modes adapted to our needs and situation, read more in the dedicated part below. Parsing also format the events for every groups according to the database for the next part, updating.
@@ -108,12 +107,60 @@ A BSON document in a `planning_XXXX` or `garbage_XXXX` collection looks like:
 
 ### Using Docker
 
+You can setup the updater easily using Docker. You will require first a Mongo service running and the `params.json` configured accordingly.
 
+Here is a sample docker-compose descriptor:
 
-### Dependencies
+```yml
+version: '3'
+
+services:
+  updater:
+    build: PlanningUpdater
+    image: cpu:latest
+    environment:
+      - "PYTHONUNBUFFERED=1"
+    links:
+      - mongo
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:4
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - "./Mongo:/data/db"
+```
+
+Note: env variable `PYTHONUNBUFFERED=1` is used to allow logs to be printed through standard out, when you use:
+
+```shell
+docker-compose logs updater
+```
+
+To launch with Docker Compose, use:
+
+```shell
+docker-compose up -d
+```
+
+### Normal
+
+For a normal installation, you must first setup a [Mongo](https://resources.mongodb.com/getting-started-with-mongodb) service, then set your configuration in `params.json` after cloning this repo.
+
+Python 3 is required, and thses dependencies:
+
 ```shell
 apt-get install python-pip
 python -m pip install --upgrade pip
-python -m pip install icalendar
-python -m pip install pymongo
+python -m pip install -r requirements.txt
 ```
+
+To launch the updater, use:
+
+```
+python ./cpu.py
+```
+
+If logs don't show off, set the environment variable `PYTHONUNBUFFERED` to `1`.
