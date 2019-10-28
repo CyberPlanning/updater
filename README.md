@@ -91,8 +91,18 @@ A BSON document in a `planning_XXXX` or `garbage_XXXX` collection looks like:
 }
 ```
 
-- **\_id** is the normal identifier given by Mongo at the document creation
-- **event_id** is an identifier to link
+- **\_id** is the normal identifier given by Mongo at the document creation, used by the script to update, delete or move documents through both collections.
+- **event_id** is an identifier found in the iCal, provided by the remote service, to follow and keep each event through updates, with this CPU knows if the event is new, was updated or unchanged, or if it doesn't exist anymore.
+- **affiliation** is the list of groups linked to the parameters (in group name) to ensure the source of the event: it comes from at least 1 group. Please note it is different from the **groups** list, which comes from parsing.
+- **title** is the event short description identified after parsing.
+- **classrooms** is the list of places where the event take place, identified on parsing.
+- **groups** is the list of groups identified on parsing the iCal, it is not the same as **affiliation** list, which comes from your configuration.
+- **teachers** is the list of participants identified on parsing.
+- **start_date** is the datetime of the start of the event in UTC.
+- **end_date** is the datetime of the end of the event in UTC.
+- **undetermined_description_items** is the list of items seen but undetermined during parsing.
+- **last_update** is the datetime of the last update during which the event was either created, modified, unchanged or moved to the garbage collection.
+- **old** is the list of modified elements for history and traceability purpose: it may holds multiple objects in which you find 1 or many of the changed elements (in the example **undetermined_description_items**) at one datetime, which is also stored in the object at **updated**. So when an event is modified and CPU detects it in an update cycle, it copies the changed data in **old** to keep track of the changes, then modifies the values in the root of the event document.
 
 ## Setting up CPU
 
