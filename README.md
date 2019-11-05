@@ -40,17 +40,83 @@ If you are willing to re-use this updater and database, these modes are most lik
 
 Parameters can be set in `params.json`. This file's scope is defined in the *JSON schema* `params.schema.json`, with a description for each node or element. It needs to be created first as we do not provide a ready-to-go file in this repo.
 
-Still, here is an example *JSON instance* to base your `params.json` file:
+Still, here is an example *JSON instance* to base your `params.json` file on:
 
 ```json
 {
-  "TODO": 0
+  "updater": {
+    "frequency": 600,
+    "error_tolerance": 5
+  },
+  "database": {
+    "name": "planning",
+    "host": "mongo",
+    "port": 27017
+  },
+  "branches": [
+    {
+      "name": "cyber",
+      "parser": {
+        "mode": "ENT",
+        "teachers_patterns": [
+          "^[A-Za-zàâäéèêëìîïòôöùûüÿ\\s\\.\\-]+$"
+        ],
+        "groups_patterns": [
+          "^(Group|GROUP)[1-6]([ -](SUB|Sub|sub)[1234])?$"
+        ],
+        "blacklist": [
+          "\\n"
+        ],
+        "delimiter": "\n"
+      },
+      "groups": [
+        {
+          "name": "1",
+          "addresses": [
+            ""
+          ]
+        },
+        {
+          "name": "2",
+          "addresses": [
+            ""
+          ]
+        }
+      ]
+    },
+    {
+      "name": "hack2g2",
+      "parser": {
+        "mode": "Hack2G2"
+      },
+      "groups": [
+        {
+          "name": "42",
+          "addresses": [
+            "https://drive.hack2g2.fr/remote.php/dav/public-calendars/2H0SEVYL4SEWNHYC?export"
+          ]
+        }
+      ]
+    }
+  ]
 }
 ```
 
+- **updater** contains general parameters about CPU.
+  - **frequency** is the idling time for CPU, after an update.
+  - **error_tolerance** is the number of consecutive unexpected errors that are allowed during an update, when such an error is thrown the script transitates to idle state, or the script breaks if the X last updates ended with errors and X exceeds **error_tolerance**.
+- **database** contains parameters to link to the Mongo service offering the database.
+  - **name** is the name of the database to use in Mongo.
+  - **host** is the domain name or the IP address for the Mongo service (default is `127.0.0.1`).
+  - **port** is the port on which the Mongo service works (default is `27017`).
+- **branches** contains parameters for every different branches, composed of many groups, to store in the database.
+  - **name** is the name of the branch (represented as `XXXX` below), used to identify collections in the Mongo database.
+  - **parser** is a set of parameters giving the **mode** of parsing and describing various possible patterns you can influence in (in ENT mode currently) for the branch groups.
+  - **groups** is a list containing every groups represented with their **name** (*affiliation* in the database) and their **adresses** linking to their downloadable iCal.
+
 ## Database architecture
 
-In the Mongo database, you can find two collections per branch:
+In the Mongo database, you can find two collections per branch, `XXXX` being the branch name:
 - `planning_XXXX` as the set of events / courses existing of the branch
 - `garbage_XXXX` as the set of events / courses which are not found (removed or event ID changed) anymore in further updates
 
@@ -92,7 +158,7 @@ A BSON document in a `planning_XXXX` or `garbage_XXXX` collection looks like:
 
 - **\_id** is the normal identifier given by Mongo at the document creation, used by the script to update, delete or move documents through both collections.
 - **event_id** is an identifier found in the iCal, provided by the remote service, to follow and keep each event through updates, with this CPU knows if the event is new, was updated or unchanged, or if it doesn't exist anymore.
-- **affiliation** is the list of groups linked to the parameters (in group name) to ensure the source of the event: it comes from at least 1 group. Please note it is different from the **groups** list, which comes from parsing.
+- **affiliation** is the list of groups linked to the parameters (in group *name*) to ensure the source of the event: it comes from at least 1 group. Please note it is different from the **groups** list, which comes from parsing.
 - **title** is the event short description identified after parsing.
 - **classrooms** is the list of places where the event take place, identified on parsing.
 - **groups** is the list of groups identified on parsing the iCal, it is not the same as **affiliation** list, which comes from your configuration.
