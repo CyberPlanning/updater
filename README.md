@@ -4,43 +4,43 @@ This script is part of the Cyberplanning project. It takes place as the backend 
 
 Let's call it **CPU**, for **CyberPlanning Updater**.
 
-The goal is to update at a given frequence the database used by the API to provide the courses to the end-user.
+The goal is to update at a given frequence the database, which is used by the API to provide stored courses to the end-user.
 
-Although Cyberplanning was first designed as a planning for students at first, this updater and the database are not restricted to such a use case. The semantics for these imply to split the courses or other events into a branch, inside of which they will have different affiliations to link them to our defined groups. Read more about it in the **Database architecture** section, or in **Configuration**.
+Although Cyberplanning was first designed as a planning for students, this updater and the database structure are not restricted to such a use case. The semantics for these imply to split the courses or other events into a branch, inside of which they will have different affiliations to link them to our defined groups. This means you can adapt it to your needs with your own planning view with this configurable updater. Read more about it in the [Database architecture](#database-architecture) section, or in [Configuration](#configuration).
 
 ## How it works
 
-CPU has different states according to its configuration (see dedicated part below).
+CPU has different states according to its [configuration](#configuration).
 
 <img src="./docs/img/cpu-states.svg" alt="./docs/img/cpu-states.svg">
 
 [Mermaid View](https://mermaidjs.github.io/mermaid-live-editor/#/view/eyJjb2RlIjoic3RhdGVEaWFncmFtXG5zdGF0ZSBVcGRhdGUge1xuc3RhdGUgQnJhbmNoIHtcblsqXSAtLT4gRG93bmxvYWRpbmdcbkRvd25sb2FkaW5nIC0tPiBEb3dubG9hZGluZyA6IEZhaWx1cmVcbkRvd25sb2FkaW5nIC0tPiBbKl0gOiBUb28gbWFueSBmYWlsdXJlc1xuRG93bmxvYWRpbmcgLS0-IFBhcnNpbmcgOiBTdWNjZXNzXG5QYXJzaW5nIC0tPiBVcGRhdGluZ1xuVXBkYXRpbmcgLS0-IFsqXVxufVxuWypdIC0tPiBCcmFuY2hcbkJyYW5jaCAtLT4gQnJhbmNoOiBOZXh0IGJyYW5jaFxuQnJhbmNoIC0tPiBbKl0gOiBObyBtb3JlIGJyYW5jaFxufVxuWypdIC0tPiBVcGRhdGVcblVwZGF0ZSAtLT4gSWRsZVxuSWRsZSAtLT4gVXBkYXRlOiBEZWxheSIsIm1lcm1haWQiOnsidGhlbWUiOiJkZWZhdWx0In19)
 
-- **Downloading**: downloads the given URLs for every groups in the current branch. After a certain amount of failed attempts, it hibernates in idle mode. In case of success, it goes through parsing.
-- **Parsing**: parses the iCal previously downloaded. It has custom modes adapted to our needs and situation, read more in the dedicated part below. Parsing also format the events for every groups according to the database for the next part, updating.
-- **Updating**: updates the database for the current branch, differenciating unchanged events, new events, updated events and deleted events.
-- **Idle**: waits a certain amount of time for the next update.
+| State | Description
+|-------|------------
+| **Downloading** | CPU downloads the given URLs for every groups in the current branch. After a certain amount of failed attempts, it hibernates in idle mode. In case of success, it goes through parsing.
+| **Parsing** | CPU parses the many iCal previously downloaded. *Parsing* has custom modes adapted to our needs and situation, read more in the [dedicated part below](#about-parsing). In this state, CPU also formats the events for every groups according to the database, then transitates to the *updating* state.
+| **Updating** | CPU updates the database for the current branch, differenciating unchanged events, new events, updated events and deleted events (seen in logs). Success here depends on the Mongo database, which should respond correctly, and the formatted events returned after the previous *parsing* state.
+| **Idle** | CPU waits a certain amount of time for the next update. This state is error-safe and should never fail for the script to continue running, as it is generally the best choice to transitate to upon error on other states.
 
 ### About Parsing
 
-The iCal format is used differently by different services and people creating events. The issue is that some of these don't use the standard way to describe their events. That's why we defined 2 modes adapted to our current needs for Cyberplanning:
+The iCal format is used differently by calendar providers and people creating events. The issue is that there is no standard way to describe the events, especially for elements we use such as the stakeholders and the groups attached to an event. That's why we defined 2 modes adapted to our current needs for Cyberplanning.
 
-- **ENT**: our school planning. The provider is ADE, and the people creating and modifying their events are multiple (school administratives, teachers, ...).
-- **Hack2G2**: an association planning. The provider is Nextcloud, and one person is creating and modifying their own events (the head or secretary).
+| Parsing mode | Description | Service provider | Event writer | Technical parsing approach
+|--------------|-------------|------------------|--------------|---------------------------
+| **ENT** | Our school planning | ADE | School administratives and teachers | We use regular expression to parse the `DESCRIPTION` field of an event in the iCal, where we find stakeholders, groups and useless items (respectively in database: `teachers`, `groups` and `undetermined_description_items`).
+| **Hack2G2** | The [Hack2g2](https://hack2g2.fr/) association planning | Nextcloud | The association board | Same, regular expression is used to parse the `DESCRIPTION` field of an event in the iCal, where we find stakeholders and useless items and keywords (respectively in database: `teachers` and `undetermined_description_items`). Groups are found in the `CLASS` field.
 
-In ENT mode, the provider ADE gives teachers and groups in the "DESCRIPTION" field of the iCal format, for every events. So the parsing of such event must be based on regular expressions, to identify our own database fields "teachers", "groups" and "undetermined_description_items".
+See more about to configure your own regular expression in the [**Configuration**](#configuration) section.
 
-In Hack2G2 mode, the provider Nextloud also uses the iCal "DESCRIPTION" field for participants (our "teachers"), but uses the iCal field "CLASS" for our "groups" database field. The parsing is more standard for groups, but teachers still need regular expression parsing according to the habits of the person updating their events.
-
-See more about Regex configuration in the **Configuration** section.
-
-If you are willing to re-use this updater and database, these modes are most likely not appropriate for your needs and a new `EventParser`-inheriting class must be written.
+If you are willing to re-use this updater and database, these modes are most likely not appropriate for your needs and a new `EventParser`-inheriting class must be written, on the example of `ENTParser` and `Hack2g2Parser`.
 
 ## Configuration
 
-Parameters can be set in `params.json`. This file's scope is defined in the *JSON schema* `params.schema.json`, with a description for each node or element. It needs to be created first as we do not provide a ready-to-go file in this repo.
+Parameters can be set in `params.json`. This file's scope is defined in the JSON schema `params.schema.json`, with a description for each node or element. It needs to be created first as we do not provide a ready-to-go file in this repo.
 
-Still, here is an example *JSON instance* to base your `params.json` file on:
+Still, here is an example JSON instance to base your `params.json` file on:
 
 ```json
 {
@@ -73,13 +73,13 @@ Still, here is an example *JSON instance* to base your `params.json` file on:
         {
           "name": "1",
           "addresses": [
-            ""
+            "https://example.com/icalprovidingflow?from=2018-04-01T00:00:00Z&to=2020-03-31T23:59:59Z"
           ]
         },
         {
           "name": "2",
           "addresses": [
-            ""
+            "https://google.com/mygooglecal"
           ]
         }
       ]
@@ -111,8 +111,8 @@ Still, here is an example *JSON instance* to base your `params.json` file on:
   - **port** is the port on which the Mongo service works (default is `27017`).
 - **branches** contains parameters for every different branches, composed of many groups, to store in the database.
   - **name** is the name of the branch (represented as `XXXX` below), used to identify collections in the Mongo database.
-  - **parser** is a set of parameters giving the **mode** of parsing and describing various possible patterns you can influence in (in ENT mode currently) for the branch groups.
-  - **groups** is a list containing every groups represented with their **name** (*affiliation* in the database) and their **adresses** linking to their downloadable iCal.
+  - **parser** is a set of parameters giving the **mode** of parsing and describing various possible patterns you can influence in (currently in ENT mode) for the branch groups.
+  - **groups** is a list containing every groups represented with their **name** (`affiliation` in the database) and their **adresses** linking to their downloadable iCal.
 
 ## Database architecture
 
@@ -175,7 +175,7 @@ A BSON document in a `planning_XXXX` or `garbage_XXXX` collection looks like:
 
 You can setup the updater easily using Docker. You will require first a Mongo service running and the `params.json` configured accordingly.
 
-Here is a sample docker-compose descriptor:
+Here is a sample `docker-compose.yml` descriptor:
 
 ```yml
 version: '3'
@@ -211,9 +211,9 @@ To launch with Docker Compose, use:
 docker-compose up -d
 ```
 
-### Normal
+### System
 
-For a normal installation, you must first setup a [Mongo](https://resources.mongodb.com/getting-started-with-mongodb) service, then set your configuration in `params.json` after cloning this repo.
+For an installation on your system, you must first setup a [Mongo](https://resources.mongodb.com/getting-started-with-mongodb) service, then set your configuration in `params.json` after cloning this repo.
 
 Python 3 is required, and thses dependencies:
 
