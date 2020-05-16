@@ -631,7 +631,8 @@ def main(database, branches):
                                     group["name"]))
                             try:
                                 ics_file = urllib.request.urlopen(address)
-                            except URLError as err:
+                            except (URLError, ConnectionError) as err:
+                                # bypass the 5 retries: it's a network error that probably won't be solved in a few seconds
                                 msg = "{} Error requesting URI {}".format(
                                     log_prefix,
                                     address)
