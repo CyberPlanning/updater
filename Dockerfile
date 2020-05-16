@@ -1,5 +1,7 @@
 FROM python:3
 
+RUN sed -i 's/TLSv1.2/TLSv1.0/g' /etc/ssl/openssl.cnf
+
 WORKDIR /usr/src/app
 
 COPY requirements.txt ./
