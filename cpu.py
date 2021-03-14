@@ -630,7 +630,14 @@ def main(database, branches):
                                     log_prefix_address,
                                     group["name"]))
                             try:
-                                ics_file = urllib.request.urlopen(address)
+                                req = urllib.request.Request(
+                                    address,
+                                    data=None, 
+                                    headers={
+                                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
+                                    }
+                                )
+                                ics_file = urllib.request.urlopen(req)
                             except (URLError, ConnectionError) as err:
                                 # bypass the 5 retries: it's a network error that probably won't be solved in a few seconds
                                 msg = "{} Error requesting URI {}".format(
