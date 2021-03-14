@@ -12,7 +12,7 @@
 # This script runs all by itself in a Docker container. It still relies on a
 # valid Mongo database.
 
-from errors import *
+from errors import Error, DownloadError, ParamError, UpdateDatabaseError, UpdaterError
 import urllib.request
 from urllib.error import URLError
 import datetime
@@ -95,19 +95,19 @@ def get_params():
     except SyntaxError as err:
         msg = "The path of the params file {} might not be valid.".format(PARAMS_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
     except FileNotFoundError as err:
         msg = "The JSON params file {} was not found.".format(PARAMS_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
     except json.decoder.JSONDecodeError as err:
         msg = "The JSON params file {} couldn't be decoded.".format(PARAMS_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
     except OSError as err:
         msg = "Unknown system error while using the JSON params file {}.".format(PARAMS_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
 
     # get the JSON schema used for validation
     try:
@@ -116,19 +116,19 @@ def get_params():
     except SyntaxError as err:
         msg = "The path of the JSON Schema params file {} might not be valid.".format(PARAMS_SCHEMA_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
     except FileNotFoundError as err:
         msg = "The JSON Schema params file {} was not found.".format(PARAMS_SCHEMA_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
     except json.decoder.JSONDecodeError as err:
         msg = "The JSON Schema params file {} coudln't be decoded.".format(PARAMS_SCHEMA_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
     except OSError as err:
         msg = "Unknow system error while using the JSON params file {}.".format(PARAMS_SCHEMA_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
 
     # validate the parameters
     try:
@@ -136,11 +136,11 @@ def get_params():
     except ValidationError as err:
         msg = "The parameters ({}) aren't valid according to the schema ({}).".format(PARAMS_FILENAME, PARAMS_SCHEMA_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
     except SchemaError as err:
         msg = "The parameters schema {} itself is invalid.".format(PARAMS_SCHEMA_FILENAME)
         log(msg, LOG_ERROR)
-        raise ParamError(msg, err)
+        raise ParamError(msg) from err
 
     # we do not check the branch mode requirements...
     # maybe a restructuration is necessary ?
@@ -485,7 +485,7 @@ def update_database(event_list, collection):
             )
         except PyMongoError as err:
             msg = "Error while updating collection {}".format(collection)
-            raise UpdateDatabaseError(msg, err)
+            raise UpdateDatabaseError(msg) from err
 
         if old_ev is not None:
             # put the modifications in the "old" array
@@ -513,7 +513,7 @@ def update_database(event_list, collection):
                 except PyMongoError as err:
                     msg = "Error while pushing modifications in collection {}".format(
                         collection)
-                    raise UpdateDatabaseError(msg, err)
+                    raise UpdateDatabaseError(msg) from err
             else:
                 unchanged += 1
         else:
@@ -554,13 +554,13 @@ def garbage_collect(start_collec, garbage_collec, last_update):
             except PyMongoError as err:
                 msg = "Error while inserting to collection {}".format(
                     garbage_collec)
-                raise UpdateDatabaseError(msg, err)
+                raise UpdateDatabaseError(msg) from err
             try:
                 bulk_remove.find({"_id": g["_id"]}).remove_one()
             except PyMongoError as err:
                 msg = "Error while removing from collection {}".format(
                     start_collec)
-                raise UpdateDatabaseError(msg, err)
+                raise UpdateDatabaseError(msg) from err
 
         bulk_insert.execute()
         bulk_remove.execute()
@@ -637,7 +637,7 @@ def main(database, branches):
                                     log_prefix,
                                     address)
                                 log(msg, LOG_ERROR)
-                                raise DownloadError(msg, err)
+                                raise DownloadError(msg) from err
                             ics = ics_file.read()
 
                             try:
@@ -687,10 +687,10 @@ def main(database, branches):
         msg = "Error while downloading the files"
         log(msg, LOG_ERROR)
         raise err
-    except:
-        msg = "An unexpected error occured in the updating process"
+    except Exception as err:
+        msg = "An unexpected error occurred in the updating process"
         log(msg, LOG_ERROR)
-        raise exc_info()[1]
+        raise Error(msg) from err
 
 
 if __name__ == '__main__':
@@ -743,7 +743,7 @@ if __name__ == '__main__':
                         break
                 else:
                     errors = 0
-            except:
+            except Exception as err:
                 m = "A global error happened, that's bad ! The script is broken."
                 log(m, LOG_ERROR)
-                raise exc_info()[1]
+                raise Error(m) from err
